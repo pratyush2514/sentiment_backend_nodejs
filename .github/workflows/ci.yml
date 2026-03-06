@@ -123,22 +123,29 @@ jobs:
     name: Docker Build
     runs-on: ubuntu-latest
     needs: build
-    if: ${{ hashFiles('Dockerfile') != '' }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: docker build -t slack-sentiment:ci .
+        run: |
+          if [ -f "Dockerfile" ]; then
+            docker build -t slack-sentiment:ci .
+          else
+            echo "No Dockerfile — skipping Docker build"
+          fi
 
       - name: Verify image starts
+        if: success()
         run: |
-          docker run --rm -d --name smoke-test \
-            -e SLACK_SIGNING_SECRET=test_secret \
-            -e DATABASE_URL=postgresql://fake:fake@localhost:5432/fake \
-            slack-sentiment:ci || true
-          sleep 3
-          docker logs smoke-test 2>&1 || true
-          docker stop smoke-test || true
+          if [ -f "Dockerfile" ]; then
+            docker run --rm -d --name smoke-test \
+              -e SLACK_SIGNING_SECRET=test_secret \
+              -e DATABASE_URL=postgresql://fake:fake@localhost:5432/fake \
+              slack-sentiment:ci || true
+            sleep 3
+            docker logs smoke-test 2>&1 || true
+            docker stop smoke-test || true
+          fi
 
   security:
     name: Security Scan
