@@ -1,0 +1,71 @@
+export interface ThreadContextPack {
+  runningSummary: string;
+  keyDecisions: string[];
+  messages: Array<{ userId: string; text: string; ts: string }>;
+  relevantDocuments?: string[];
+  riskScore?: number;
+}
+
+export function buildThreadAnalysisPrompt(context: ThreadContextPack): {
+  system: string;
+  user: string;
+} {
+  const decisionsBlock =
+    context.keyDecisions.length > 0
+      ? context.keyDecisions.map((d) => `- ${d}`).join("\n")
+      : "None recorded yet.";
+
+  const riskHint =
+    context.riskScore !== undefined && context.riskScore > 0
+      ? `\nHeuristic risk score for latest message: ${context.riskScore.toFixed(2)} (0 = neutral, 1 = high risk). Use this as a signal — a high score with positive-sounding words may indicate sarcasm.`
+      : "";
+
+  const system = `You are a senior sentiment analyst specializing in workplace communication. Your task is to classify the emotional tone of a Slack thread with human-level accuracy, including detecting sarcasm and irony across the conversation arc.
+
+## Context
+Conversation summary:
+${context.runningSummary || "No conversation summary available yet."}
+
+Recent key decisions:
+${decisionsBlock}
+${context.relevantDocuments && context.relevantDocuments.length > 0 ? `\n--- Relevant historical context ---\n${context.relevantDocuments.join("\n\n")}\n` : ""}${riskHint}
+
+## Critical: Sarcasm & Irony Detection in Threads
+Threads provide the richest context for sarcasm detection. You MUST:
+1. Track tone shifts across messages — sarcasm often appears as a sudden positive tone after escalating negativity.
+2. Check if later messages use positive words that contradict earlier negative messages (e.g., frustration about bugs → "Sure, everything is [emphasis: fine]").
+3. Watch for [strikethrough: text] markers — these are explicit semantic cancellations (the user typed something then visually crossed it out).
+4. Note temporal patterns — a long gap before a terse, positive-sounding reply often signals passive aggression or sarcasm.
+5. Track per-user arcs — if the same user goes from detailed complaints to one-word "agreement", that shift is often sarcastic.
+
+When sarcasm is detected anywhere in the thread, set sarcasm_detected to true and classify the dominant_emotion based on INTENDED meaning, not literal surface words.
+
+## Output Format
+Return strictly valid JSON:
+{
+  "dominant_emotion": one of ["anger","disgust","fear","joy","neutral","sadness","surprise"],
+  "confidence": number between 0 and 1,
+  "escalation_risk": one of ["low","medium","high"],
+  "sarcasm_detected": boolean,
+  "intended_emotion": one of ["anger","disgust","fear","joy","neutral","sadness","surprise"] (ONLY when sarcasm_detected is true),
+  "explanation": string (1-2 sentences explaining your classification, including sarcasm reasoning if detected),
+  "thread_sentiment": string (one sentence overall assessment of the thread mood),
+  "sentiment_trajectory": one of ["improving","stable","deteriorating"],
+  "summary": string (2-3 sentence thread summary)
+}
+
+Do not include any text outside the JSON object.
+Do not wrap in code blocks or markdown.
+Return ONLY the JSON object.`;
+
+  // Render messages with timestamps for temporal context
+  const user = context.messages
+    .map((m) => {
+      const date = new Date(parseFloat(m.ts) * 1000);
+      const time = date.toISOString().slice(11, 16); // HH:MM
+      return `[${time}] [${m.userId}] ${m.text}`;
+    })
+    .join("\n");
+
+  return { system, user };
+}
