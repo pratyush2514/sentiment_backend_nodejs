@@ -1,14 +1,24 @@
 import { z } from "zod/v4";
 import { config } from "../config.js";
 import { BACKFILL_BATCH_SIZE, MAX_DECISIONS } from "../constants.js";
+import {
+  ThreadEmotionalTemperatureSchema,
+  ThreadOperationalRiskSchema,
+  ThreadStateSchema,
+  ThreadSurfacePrioritySchema,
+} from "../contracts/threadRollup.js";
 import * as db from "../db/queries.js";
 import { buildChannelRollupPrompt } from "../prompts/channelRollup.js";
 import { buildThreadRollupPrompt } from "../prompts/threadRollup.js";
 import { logger } from "../utils/logger.js";
-import { parseAndValidate, STRICT_RETRY_SUFFIX } from "./llmHelpers.js";
+import { clampAnalysisWindowDays } from "./analysisWindow.js";
+import { parseAndValidate, STRICT_RETRY_SUFFIX, summarizeRawLlmResponse } from "./llmHelpers.js";
 import { createLLMProvider } from "./llmProviders.js";
 import { sanitizeForExternalUse } from "./privacyFilter.js";
+import { normalizeSummaryForLLM } from "./summaryState.js";
+import { deriveThreadSurfacePriority, normalizeCrucialMoments } from "./threadInsightPolicy.js";
 import type { LLMRawResult } from "./llmProviders.js";
+import type { CrucialMoment, MessageRow, OperationalRisk } from "../types/database.js";
 
 const log = logger.child({ module: "summarizer" });
 
@@ -33,6 +43,23 @@ const RollupSchema = z.object({
   new_decisions: z.array(z.string()).max(10),
 });
 
+const ThreadRollupSchema = RollupSchema.extend({
+  open_questions: z.array(z.string()).max(10).optional().default([]),
+  primary_issue: z.string().min(1).max(300),
+  thread_state: ThreadStateSchema,
+  emotional_temperature: ThreadEmotionalTemperatureSchema,
+  operational_risk: ThreadOperationalRiskSchema,
+  surface_priority: ThreadSurfacePrioritySchema,
+  crucial_moments: z.array(
+    z.object({
+      messageTs: z.string().regex(/^\d+\.\d+$/),
+      kind: z.string().min(1).max(80),
+      reason: z.string().min(1).max(240),
+      surfacePriority: ThreadSurfacePrioritySchema,
+    }),
+  ).max(8).optional().default([]),
+});
+
 type RollupOutput = z.infer<typeof RollupSchema>;
 
 export interface RollupResult {
@@ -40,6 +67,45 @@ export interface RollupResult {
   keyDecisions: string[];
   tokenCount: number;
   raw: LLMRawResult;
+  openQuestions?: string[];
+}
+
+export interface ThreadRollupResult extends RollupResult {
+  primaryIssue: string;
+  threadState: "monitoring" | "investigating" | "blocked" | "waiting_external" | "resolved" | "escalated";
+  emotionalTemperature: "calm" | "watch" | "tense" | "escalated";
+  operationalRisk: OperationalRisk;
+  surfacePriority: "none" | "low" | "medium" | "high";
+  crucialMoments: CrucialMoment[];
+}
+
+function normalizeThreadRollupResult(
+  data: z.infer<typeof ThreadRollupSchema>,
+  raw: LLMRawResult,
+): ThreadRollupResult {
+  const crucialMoments = normalizeCrucialMoments(data.crucial_moments);
+  const surfacePriority = deriveThreadSurfacePriority({
+    threadState: data.thread_state,
+    operationalRisk: data.operational_risk,
+    emotionalTemperature: data.emotional_temperature,
+    surfacePriority: data.surface_priority,
+    openQuestions: data.open_questions,
+    crucialMoments,
+  });
+
+  return {
+    summary: data.summary,
+    keyDecisions: data.new_decisions,
+    openQuestions: data.open_questions,
+    primaryIssue: data.primary_issue,
+    threadState: data.thread_state,
+    emotionalTemperature: data.emotional_temperature,
+    operationalRisk: data.operational_risk,
+    surfacePriority,
+    crucialMoments,
+    tokenCount: estimateTokens(data.summary),
+    raw,
+  };
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -74,7 +140,10 @@ async function llmCallWithRetry(
     };
   }
 
-  log.error({ error: second.error, rawResponse: retryResult.content }, "Rollup validation failed after retry");
+  log.error(
+    { error: second.error, ...summarizeRawLlmResponse(retryResult.content) },
+    "Rollup validation failed after retry",
+  );
   return null;
 }
 
@@ -91,11 +160,13 @@ export async function channelRollup(
   existingSummary: string,
   messages: RollupMessage[],
   existingDecisions: string[],
+  canonicalState?: Parameters<typeof buildChannelRollupPrompt>[0]["canonicalState"],
 ): Promise<RollupResult | null> {
   const { system, user } = buildChannelRollupPrompt({
-    existingSummary,
+    existingSummary: normalizeSummaryForLLM(existingSummary),
     existingDecisions,
     messages,
+    canonicalState,
   });
 
   const result = await llmCallWithRetry(system, user);
@@ -118,21 +189,37 @@ export async function threadRollup(
   _threadTs: string,
   messages: RollupMessage[],
   channelSummary: string,
-): Promise<RollupResult | null> {
+): Promise<ThreadRollupResult | null> {
   const { system, user } = buildThreadRollupPrompt({
-    channelSummary,
+    channelSummary: normalizeSummaryForLLM(channelSummary),
     messages,
   });
 
-  const result = await llmCallWithRetry(system, user);
-  if (!result) return null;
+  const provider = createLLMProvider();
+  const model = config.LLM_MODEL;
 
-  return {
-    summary: result.data.summary,
-    keyDecisions: result.data.new_decisions,
-    tokenCount: estimateTokens(result.data.summary),
-    raw: result.raw,
-  };
+  const rawResult = await provider.chat(system, user, model);
+  const first = parseAndValidate(rawResult.content, ThreadRollupSchema);
+  if (first.success) {
+    return normalizeThreadRollupResult(first.data, rawResult);
+  }
+
+  log.warn({ error: first.error }, "Thread rollup LLM response validation failed, retrying");
+  const retryResult = await provider.chat(system + STRICT_RETRY_SUFFIX, user, model);
+  const second = parseAndValidate(retryResult.content, ThreadRollupSchema);
+  if (second.success) {
+    return normalizeThreadRollupResult(second.data, {
+      ...retryResult,
+      promptTokens: rawResult.promptTokens + retryResult.promptTokens,
+      completionTokens: rawResult.completionTokens + retryResult.completionTokens,
+    });
+  }
+
+  log.error(
+    { error: second.error, ...summarizeRawLlmResponse(retryResult.content) },
+    "Thread rollup validation failed after retry",
+  );
+  return null;
 }
 
 // ─── Backfill Summarization (Hierarchical Compression) ──────────────────────
@@ -140,46 +227,65 @@ export async function threadRollup(
 export async function backfillSummarize(
   workspaceId: string,
   channelId: string,
-): Promise<{ summary: string; keyDecisions: string[] } | null> {
-  const allMessages = await db.getMessages(workspaceId, channelId, { limit: BACKFILL_BATCH_SIZE });
-
-  if (allMessages.length === 0) {
+  windowDays: number = config.SUMMARY_WINDOW_DAYS,
+): Promise<{
+  summary: string;
+  keyDecisions: string[];
+  sourceTsStart: string | null;
+  sourceTsEnd: string | null;
+  messageCount: number;
+} | null> {
+  const safeWindowDays = clampAnalysisWindowDays(windowDays);
+  const userIds = await db.getDistinctUserIds(workspaceId, channelId);
+  if (userIds.length === 0) {
     log.info({ channelId }, "No messages for backfill summarization");
     return null;
   }
 
-  // Resolve user profiles for display names
-  const userIds = [...new Set(allMessages.map((m) => m.user_id))];
   const profiles = await db.getUserProfiles(workspaceId, userIds);
   const profileMap = new Map(profiles.map((p) => [p.user_id, p]));
-
-  const enrichedMessages: RollupMessage[] = allMessages.map((m) => {
-    const profile = profileMap.get(m.user_id);
-    const rawText = m.normalized_text ?? m.text;
-    const sanitized = sanitizeForExternalUse(rawText);
-    return {
-      userId: m.user_id,
-      displayName: profile?.display_name ?? profile?.real_name ?? null,
-      text: sanitized.action === "redacted" ? sanitized.text
-        : sanitized.action === "skipped" ? "[message contained sensitive content]"
-        : rawText,
-      ts: m.ts,
-    };
-  });
-
-  // Batch into groups
-  const batches: RollupMessage[][] = [];
-  for (let i = 0; i < enrichedMessages.length; i += BACKFILL_BATCH_SIZE) {
-    batches.push(enrichedMessages.slice(i, i + BACKFILL_BATCH_SIZE));
-  }
-
-  log.info({ channelId, batches: batches.length, totalMessages: enrichedMessages.length }, "Starting backfill summarization");
-
-  // Summarize each batch (leaf summaries)
   const leafSummaries: string[] = [];
   const allDecisions: string[] = [];
+  let cursorTs: string | null = null;
+  let totalMessages = 0;
+  let batchCount = 0;
+  let sourceTsStart: string | null = null;
+  let sourceTsEnd: string | null = null;
 
-  for (const batch of batches) {
+  log.info({ channelId, windowDays: safeWindowDays }, "Starting backfill summarization (time-windowed)");
+
+  while (true) {
+    const batchMessages: MessageRow[] = await db.getMessagesInWindow(
+      workspaceId,
+      channelId,
+      safeWindowDays,
+      cursorTs,
+      BACKFILL_BATCH_SIZE,
+    );
+    if (batchMessages.length === 0) {
+      break;
+    }
+
+    const batch: RollupMessage[] = batchMessages.map((m) => {
+      const profile = profileMap.get(m.user_id);
+      const rawText = m.normalized_text ?? m.text;
+      const sanitized = sanitizeForExternalUse(rawText);
+      return {
+        userId: m.user_id,
+        displayName: profile?.display_name ?? profile?.real_name ?? null,
+        text: sanitized.action === "redacted" ? sanitized.text
+          : sanitized.action === "skipped" ? "[message contained sensitive content]"
+          : rawText,
+        ts: m.ts,
+      };
+    });
+
+    batchCount += 1;
+    totalMessages += batch.length;
+    sourceTsStart = sourceTsStart ?? batchMessages[0]?.ts ?? null;
+    sourceTsEnd = batchMessages[batchMessages.length - 1]?.ts ?? sourceTsEnd;
+    cursorTs = batchMessages[batchMessages.length - 1]?.ts ?? cursorTs;
+
     // Budget check before each batch
     const dailyCost = await db.getDailyLLMCost(workspaceId);
     if (dailyCost >= config.LLM_DAILY_BUDGET_USD) {
@@ -199,13 +305,21 @@ export async function backfillSummarize(
     }
   }
 
+  log.info({ channelId, batches: batchCount, totalMessages }, "Backfill summarization batches prepared");
+
   if (leafSummaries.length === 0) {
     return null;
   }
 
   // If only one batch, use its summary directly
   if (leafSummaries.length === 1) {
-    return { summary: leafSummaries[0], keyDecisions: allDecisions.slice(-MAX_DECISIONS) };
+    return {
+      summary: leafSummaries[0],
+      keyDecisions: allDecisions.slice(-MAX_DECISIONS),
+      sourceTsStart,
+      sourceTsEnd,
+      messageCount: totalMessages,
+    };
   }
 
   // Meta-summarize leaf summaries
@@ -219,8 +333,20 @@ export async function backfillSummarize(
   const metaResult = await channelRollup("", metaMessages, allDecisions);
   if (!metaResult) {
     // Fall back to last leaf summary
-    return { summary: leafSummaries[leafSummaries.length - 1], keyDecisions: allDecisions.slice(-MAX_DECISIONS) };
+    return {
+      summary: leafSummaries[leafSummaries.length - 1],
+      keyDecisions: allDecisions.slice(-MAX_DECISIONS),
+      sourceTsStart,
+      sourceTsEnd,
+      messageCount: totalMessages,
+    };
   }
 
-  return { summary: metaResult.summary, keyDecisions: metaResult.keyDecisions };
+  return {
+    summary: metaResult.summary,
+    keyDecisions: metaResult.keyDecisions,
+    sourceTsStart,
+    sourceTsEnd,
+    messageCount: totalMessages,
+  };
 }

@@ -3,18 +3,44 @@ import cors from "cors";
 import express from "express";
 import helmet from "helmet";
 import { config } from "./config.js";
-import { runMigrations, checkConnection, shutdown as shutdownDb } from "./db/pool.js";
+import {
+  runMigrations,
+  checkConnection,
+  checkDirectConnection,
+  getMigrationStatus,
+  shutdown as shutdownDb,
+} from "./db/pool.js";
 import { getStuckInitializingChannels } from "./db/queries.js";
 import { requireApiAuth } from "./middleware/apiAuth.js";
 import { startQueue, stopQueue, enqueueBackfill } from "./queue/boss.js";
+import { adminRouter } from "./routes/admin.js";
+import { alertsRouter } from "./routes/alerts.js";
 import { analyticsRouter } from "./routes/analytics.js";
+import { authRouter } from "./routes/auth.js";
 import { channelsRouter } from "./routes/channels.js";
+import { conversationPoliciesRouter } from "./routes/conversationPolicies.js";
+import { eventsRouter } from "./routes/events.js";
+import { followUpRulesRouter } from "./routes/followUpRules.js";
 import { healthRouter } from "./routes/health.js";
+import { inboxRouter } from "./routes/inbox.js";
+import { rolesRouter } from "./routes/roles.js";
+import { slackRouter } from "./routes/slack.js";
 import { slackEventsRouter } from "./routes/slackEvents.js";
+import { startChannelMemberSync, stopChannelMemberSync } from "./services/channelMemberSync.js";
+import { startFollowUpSweep, stopFollowUpSweep } from "./services/followUpSweep.js";
+import { startQueueMaintenance, stopQueueMaintenance } from "./services/queueMaintenance.js";
+import { startRetentionSchedule, stopRetentionSchedule } from "./services/retentionSweep.js";
+import {
+  markHttpServing,
+  markQueueRuntimeState,
+  markSchedulerRunning,
+} from "./services/runtimeState.js";
 import { resolveBotUserId } from "./services/slackClient.js";
 import { startReconcileLoop, stopReconcileLoop } from "./services/threadReconcile.js";
+import { startTokenRotationSchedule, stopTokenRotationSchedule } from "./services/tokenRotationSchedule.js";
 import { logger } from "./utils/logger.js";
 import type { Request, Response, NextFunction } from "express";
+
 
 const app = express();
 
@@ -35,8 +61,12 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
   next();
 });
 
-// Request timeout
+// Request timeout (exempt SSE stream from timeout)
 app.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.path.startsWith("/api/events")) {
+    next();
+    return;
+  }
   res.setTimeout(config.REQUEST_TIMEOUT_MS, () => {
     if (!res.headersSent) {
       res.status(408).json({ error: "request_timeout", requestId: req.id });
@@ -50,8 +80,17 @@ app.use("/api", express.json({ limit: "1mb" }));
 
 // Routes
 app.use("/", healthRouter);
+app.use("/api/auth", express.json({ limit: "1mb" }), authRouter);
+app.use("/api/admin", requireApiAuth, adminRouter);
 app.use("/api/channels", requireApiAuth, channelsRouter);
 app.use("/api/analytics", requireApiAuth, analyticsRouter);
+app.use("/api/alerts", requireApiAuth, alertsRouter);
+app.use("/api/inbox", requireApiAuth, inboxRouter);
+app.use("/api/follow-up-rules", requireApiAuth, followUpRulesRouter);
+app.use("/api/conversation-policies", requireApiAuth, conversationPoliciesRouter);
+app.use("/api/roles", requireApiAuth, rolesRouter);
+app.use("/api/events", requireApiAuth, eventsRouter);
+app.use("/api/slack", requireApiAuth, slackRouter);
 app.use("/slack/events", slackEventsRouter);
 
 // Centralized error handler
@@ -71,23 +110,65 @@ app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
 let server: ReturnType<typeof app.listen> | null = null;
 let shuttingDown = false;
 
+function roleIncludesWeb(): boolean {
+  return config.RUNTIME_ROLE === "all" || config.RUNTIME_ROLE === "web";
+}
+
+function roleIncludesWorkers(): boolean {
+  return config.RUNTIME_ROLE === "all" || config.RUNTIME_ROLE === "worker";
+}
+
+function roleIncludesScheduler(): boolean {
+  return config.RUNTIME_ROLE === "all" || config.RUNTIME_ROLE === "scheduler";
+}
+
 async function start(): Promise<void> {
   logger.info("Starting Slack Sentiment Analysis System...");
+  logger.info({ runtimeRole: config.RUNTIME_ROLE }, "Runtime role selected");
+  logger.info(
+    {
+      llmProvider: config.LLM_PROVIDER,
+      llmModel: config.LLM_MODEL,
+      llmThreadModel: config.LLM_MODEL_THREAD,
+      embeddingsEnabled: Boolean(config.OPENAI_API_KEY),
+    },
+    "LLM configuration",
+  );
 
   // 1. Check database connection
   const dbOk = await checkConnection();
-  if (!dbOk) {
-    logger.fatal("Cannot connect to database. Exiting.");
+  const directDbOk = await checkDirectConnection();
+  if (!dbOk || !directDbOk) {
+    logger.fatal(
+      { pooledConnectionOk: dbOk, directConnectionOk: directDbOk },
+      "Cannot connect to required database endpoints. Exiting.",
+    );
     process.exit(1);
   }
-  logger.info("Database connected");
+  logger.info("Database connections verified");
 
-  // 2. Run migrations
-  await runMigrations();
-  logger.info("Migrations complete");
+  // 2. Run or verify migrations
+  if (config.RUN_MIGRATIONS_ON_BOOT) {
+    await runMigrations();
+    logger.info("Migrations complete");
+  } else {
+    const migrationStatus = await getMigrationStatus();
+    if (!migrationStatus.upToDate) {
+      logger.fatal(
+        { pendingMigrations: migrationStatus.pending },
+        "Pending migrations detected and RUN_MIGRATIONS_ON_BOOT is disabled",
+      );
+      process.exit(1);
+    }
+    logger.info("Migration status verified");
+  }
 
   // 3. Start pg-boss queue
-  await startQueue();
+  await startQueue({ registerWorkers: roleIncludesWorkers() });
+  markQueueRuntimeState({
+    queueStarted: true,
+    workersRegistered: roleIncludesWorkers(),
+  });
   logger.info("Queue started");
 
   // 4. Resolve bot user ID
@@ -95,27 +176,47 @@ async function start(): Promise<void> {
     const botId = await resolveBotUserId();
     logger.info({ botUserId: botId }, "Bot identity resolved");
   } else {
-    logger.warn("SLACK_BOT_TOKEN not set — backfill and event processing disabled");
+    logger.info("SLACK_BOT_TOKEN not set — bot tokens will be resolved per-workspace from the database");
   }
 
-  // 5. Recover channels stuck in 'initializing' (crash recovery)
-  const stuckChannels = await getStuckInitializingChannels();
-  for (const ch of stuckChannels) {
-    await enqueueBackfill(ch.workspace_id, ch.channel_id, "startup-recovery");
-    logger.info({ channelId: ch.channel_id }, "Re-enqueued backfill for stuck channel");
-  }
-  if (stuckChannels.length > 0) {
-    logger.info({ count: stuckChannels.length }, "Startup recovery: re-enqueued stuck channels");
+  if (roleIncludesScheduler()) {
+    const stuckChannels = await getStuckInitializingChannels();
+    for (const ch of stuckChannels) {
+      await enqueueBackfill(ch.workspace_id, ch.channel_id, "startup-recovery");
+      logger.info({ channelId: ch.channel_id }, "Re-enqueued backfill for stuck channel");
+    }
+    if (stuckChannels.length > 0) {
+      logger.info({ count: stuckChannels.length }, "Startup recovery: re-enqueued stuck channels");
+    }
+
+    startReconcileLoop();
+    logger.info("Thread reconciliation loop started");
+
+    startQueueMaintenance();
+    logger.info("Queue maintenance loop started");
+
+    startFollowUpSweep();
+    logger.info("Follow-up reminder sweep started");
+
+    startRetentionSchedule();
+    logger.info("Data retention sweep scheduled");
+
+    startChannelMemberSync();
+    logger.info("Channel member sync scheduled");
+
+    startTokenRotationSchedule();
+    logger.info("Slack bot token refresh sweep scheduled");
+    markSchedulerRunning(true);
   }
 
-  // 6. Start thread reconciliation loop
-  startReconcileLoop();
-  logger.info("Thread reconciliation loop started");
-
-  // 7. Start HTTP server
-  server = app.listen(config.PORT, () => {
-    logger.info({ port: config.PORT }, "Server listening");
-  });
+  if (roleIncludesWeb()) {
+    server = app.listen(config.PORT, () => {
+      markHttpServing(true);
+      logger.info({ port: config.PORT }, "Server listening");
+    });
+  } else {
+    logger.info("HTTP server disabled for this runtime role");
+  }
 }
 
 // Graceful shutdown
@@ -135,12 +236,20 @@ async function gracefulShutdown(signal: string): Promise<void> {
   // 1. Stop accepting new connections
   if (server) {
     server.close(() => {
+      markHttpServing(false);
       logger.info("HTTP server closed");
     });
   }
 
-  // 2. Stop reconcile loop
-  stopReconcileLoop();
+  if (roleIncludesScheduler()) {
+    stopReconcileLoop();
+    stopQueueMaintenance();
+    stopFollowUpSweep();
+    stopRetentionSchedule();
+    stopChannelMemberSync();
+    stopTokenRotationSchedule();
+    markSchedulerRunning(false);
+  }
 
   // 3. Drain queue
   await stopQueue();
@@ -154,7 +263,17 @@ async function gracefulShutdown(signal: string): Promise<void> {
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
+// Transient network errors (ETIMEDOUT, ECONNRESET, EPIPE) from idle DB
+// connections should NOT crash the process. The pool replaces dead connections
+// automatically on the next query.
+const RECOVERABLE_CODES = new Set(["ETIMEDOUT", "ECONNRESET", "EPIPE", "ECONNREFUSED"]);
+
 process.on("uncaughtException", (err) => {
+  const code = (err as NodeJS.ErrnoException).code;
+  if (code && RECOVERABLE_CODES.has(code)) {
+    logger.warn({ err: err.message, code }, "Recoverable connection error (not crashing)");
+    return;
+  }
   logger.fatal({ err }, "Uncaught exception — shutting down");
   gracefulShutdown("uncaughtException");
 });

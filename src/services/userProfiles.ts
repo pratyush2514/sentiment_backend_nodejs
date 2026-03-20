@@ -1,7 +1,7 @@
 import { PROFILE_CACHE_TTL_MS, PROFILE_MAX_CACHE_SIZE } from "../constants.js";
 import * as db from "../db/queries.js";
 import { logger } from "../utils/logger.js";
-import { fetchUserProfile } from "./slackClient.js";
+import { getSlackClient } from "./slackClientFactory.js";
 import type { UserProfileRow } from "../types/database.js";
 
 const log = logger.child({ service: "userProfiles" });
@@ -83,11 +83,16 @@ export async function fetchAndCacheFromSlack(
   const key = cacheKey(workspaceId, userId);
 
   try {
-    const response = await fetchUserProfile(userId);
+    const slack = await getSlackClient(workspaceId);
+    const response = await slack.fetchUserProfile(userId);
 
     const displayName = response.user?.profile?.display_name || null;
     const realName = response.user?.profile?.real_name || null;
     const profileImage = response.user?.profile?.image_48 || null;
+    const email = response.user?.profile?.email || null;
+    const isAdmin = response.user?.is_admin ?? false;
+    const isOwner = response.user?.is_owner ?? false;
+    const isBot = response.user?.is_bot ?? false;
 
     const row = await db.upsertUserProfile(
       workspaceId,
@@ -95,6 +100,10 @@ export async function fetchAndCacheFromSlack(
       displayName,
       realName,
       profileImage,
+      email,
+      isAdmin,
+      isOwner,
+      isBot,
     );
 
     setCacheEntry(key, { profile: row, cachedAt: Date.now() });

@@ -69,14 +69,35 @@ docker run --env-file .env -p 3000:3000 slack-sentiment-bot
 1. Create a Slack app at [api.slack.com/apps](https://api.slack.com/apps)
 2. Enable **Event Subscriptions** with request URL: `https://your-host/slack/events`
 3. Subscribe to bot events: `message.channels`, `member_joined_channel`
-4. Add bot scopes: `channels:history`, `channels:read`, `users:read`
-5. Install to workspace and copy Bot Token to `SLACK_BOT_TOKEN`
-6. Copy Signing Secret to `SLACK_SIGNING_SECRET`
-7. Invite the bot to channels you want monitored
+4. Add bot scopes: `channels:history`, `channels:read`, `groups:history`, `groups:read`, `users:read`, `team:read`
+5. Add write scopes if you use reminders or DM nudges: `chat:write`, `im:write`
+6. Install to workspace
+7. Copy Signing Secret to `SLACK_SIGNING_SECRET`
+8. For production multi-workspace installs, use the OAuth install flow so PulseBoard stores a refresh token and token expiry metadata
+9. Invite the bot to channels you want monitored
+
+### Production runtime modes
+
+PulseBoard supports split runtime roles through `RUNTIME_ROLE`:
+
+- `web` — HTTP API, Slack events, SSE
+- `worker` — pg-boss workers and async processing
+- `scheduler` — reconcile, retention, follow-up, and token rotation sweeps
+- `all` — everything in one process (acceptable for small internal environments)
+
+Recommended production deployment:
+
+- run migrations once before deploy
+- deploy separate `web`, `worker`, and `scheduler` processes
+- use a direct Postgres connection string for `DATABASE_URL`
+- use `DATABASE_URL_POOLED` only for application queries if you add a pooler later
 
 ## API Endpoints
 
-All `/api/*` endpoints require `x-api-key` header matching `API_AUTH_TOKEN`.
+All `/api/*` endpoints require either:
+
+- `Authorization: Bearer <API_AUTH_TOKEN>`
+- or a valid Supabase JWT when `SUPABASE_JWT_SECRET` is configured
 
 ### Health
 
@@ -111,6 +132,12 @@ All `/api/*` endpoints require `x-api-key` header matching `API_AUTH_TOKEN`.
 pnpm run dev          # Development with hot reload
 pnpm run build        # Compile TypeScript
 pnpm run start        # Run compiled output
+pnpm run start:web    # Run compiled output as web role
+pnpm run start:worker # Run compiled output as worker role
+pnpm run start:scheduler # Run compiled output as scheduler role
+pnpm run start:prod:web
+pnpm run start:prod:worker
+pnpm run start:prod:scheduler
 pnpm run test         # Run tests
 pnpm run test:watch   # Watch mode
 pnpm run typecheck    # Type check without emit

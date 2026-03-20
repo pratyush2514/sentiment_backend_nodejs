@@ -24,6 +24,7 @@ export const logger = pino({
       "token", "*.token", "secret", "*.secret",
       "apiKey", "*.apiKey",
       "password", "*.password",
+      "rawResponse", "*.rawResponse",
       // DB connection strings
       "connectionString", "*.connectionString",
       "databaseUrl", "*.databaseUrl",

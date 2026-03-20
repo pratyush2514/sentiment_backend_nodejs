@@ -2,8 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -18,7 +18,7 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: latest
+          version: 10
 
       - uses: actions/setup-node@v4
         with:
@@ -42,7 +42,7 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: latest
+          version: 10
 
       - uses: actions/setup-node@v4
         with:
@@ -66,7 +66,7 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: latest
+          version: 10
 
       - uses: actions/setup-node@v4
         with:
@@ -99,7 +99,7 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: latest
+          version: 10
 
       - uses: actions/setup-node@v4
         with:
@@ -134,17 +134,11 @@ jobs:
             echo "No Dockerfile — skipping Docker build"
           fi
 
-      - name: Verify image starts
+      - name: Verify image contents
         if: success()
         run: |
           if [ -f "Dockerfile" ]; then
-            docker run --rm -d --name smoke-test \
-              -e SLACK_SIGNING_SECRET=test_secret \
-              -e DATABASE_URL=postgresql://fake:fake@localhost:5432/fake \
-              slack-sentiment:ci || true
-            sleep 3
-            docker logs smoke-test 2>&1 || true
-            docker stop smoke-test || true
+            docker run --rm --entrypoint sh slack-sentiment:ci -c "test -f /app/dist/index.js"
           fi
 
   security:
@@ -157,7 +151,7 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: latest
+          version: 10
 
       - uses: actions/setup-node@v4
         with:

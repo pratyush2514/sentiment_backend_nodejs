@@ -8,6 +8,13 @@ export const analyticsRouter = Router();
 
 const log = logger.child({ route: "analytics" });
 
+function resolveWorkspaceId(
+  req: { workspaceId?: string },
+  requestedWorkspaceId?: string,
+): string {
+  return req.workspaceId ?? requestedWorkspaceId ?? DEFAULT_WORKSPACE;
+}
+
 // ─── Validation Schemas ─────────────────────────────────────────────────────
 
 const trendsQuery = z.object({
@@ -39,7 +46,7 @@ analyticsRouter.get("/sentiment-trends", async (req, res) => {
     return;
   }
 
-  const workspaceId = query.data.workspace_id ?? DEFAULT_WORKSPACE;
+  const workspaceId = resolveWorkspaceId(req, query.data.workspace_id);
 
   const buckets = await db.getSentimentTrends(workspaceId, {
     channelId: query.data.channel_id ?? null,
@@ -70,7 +77,7 @@ analyticsRouter.get("/costs", async (req, res) => {
     return;
   }
 
-  const workspaceId = query.data.workspace_id ?? DEFAULT_WORKSPACE;
+  const workspaceId = resolveWorkspaceId(req, query.data.workspace_id);
 
   const breakdown = await db.getCostBreakdown(workspaceId, {
     from: query.data.from ?? null,
@@ -100,7 +107,7 @@ analyticsRouter.get("/overview", async (req, res) => {
     return;
   }
 
-  const workspaceId = query.data.workspace_id ?? DEFAULT_WORKSPACE;
+  const workspaceId = resolveWorkspaceId(req, query.data.workspace_id);
 
   const overview = await db.getAnalyticsOverview(workspaceId);
 

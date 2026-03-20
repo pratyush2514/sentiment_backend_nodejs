@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { isHumanMessage, isProcessableHumanMessageEvent, isBotJoinEvent } from "./slack.js";
+import {
+  isBotJoinEvent,
+  isCandidateMessageEvent,
+  isHumanMessage,
+  isIngestibleHistoryMessage,
+  isProcessableHumanMessageEvent,
+  isProcessableMessageEvent,
+} from "./slack.js";
 
 describe("isHumanMessage", () => {
   it("returns true for a valid human message", () => {
@@ -80,6 +87,33 @@ describe("isProcessableHumanMessageEvent", () => {
       channel: "C12345",
       bot_id: "B12345",
     };
+    expect(isProcessableHumanMessageEvent(event)).toBe(false);
+  });
+});
+
+describe("automation-aware message predicates", () => {
+  it("allows bot-backed history messages when automation ingestion is enabled", () => {
+    const msg = {
+      ts: "1234567890.123456",
+      text: "workflow failed",
+      user: "U12345",
+      bot_id: "B12345",
+    };
+    expect(isIngestibleHistoryMessage(msg, { allowAutomatedMessages: true })).toBe(true);
+    expect(isHumanMessage(msg)).toBe(false);
+  });
+
+  it("detects candidate message events before bot filtering", () => {
+    const event = {
+      type: "message",
+      ts: "1234567890.123456",
+      text: "workflow failed",
+      user: "U12345",
+      channel: "C12345",
+      bot_id: "B12345",
+    };
+    expect(isCandidateMessageEvent(event)).toBe(true);
+    expect(isProcessableMessageEvent(event, { allowAutomatedMessages: true })).toBe(true);
     expect(isProcessableHumanMessageEvent(event)).toBe(false);
   });
 });

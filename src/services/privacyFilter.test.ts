@@ -251,11 +251,10 @@ describe("detectSensitiveContent", () => {
 // ─── Redaction ──────────────────────────────────────────────────────────────
 
 describe("redactSensitiveContent", () => {
-  it("replaces matched span with [REDACTED]", () => {
+  it("replaces matched span with a neutral placeholder", () => {
     const text = "my key is sk-abc123def456ghi789jkl012mno345 and thats it";
     const detection = detectSensitiveContent(text);
     const redacted = redactSensitiveContent(text, detection.matches);
-    expect(redacted).toContain("[REDACTED]");
     expect(redacted).not.toContain("sk-abc123");
     expect(redacted).toContain("my key is ");
     expect(redacted).toContain(" and thats it");
@@ -282,8 +281,8 @@ describe("redactSensitiveContent", () => {
     const text = "api_key=sk-abc123def456ghi789jkl012mno345";
     const detection = detectSensitiveContent(text);
     const redacted = redactSensitiveContent(text, detection.matches);
-    // Should produce clean redaction without double [REDACTED]
-    expect(redacted.split("[REDACTED]").length).toBeLessThanOrEqual(3);
+    expect(redacted).not.toContain("api_key=");
+    expect(redacted).not.toContain("sk-abc123");
   });
 });
 
@@ -309,7 +308,6 @@ describe("sanitizeForExternalUse", () => {
     const result = sanitizeForExternalUse(text, "redact");
     expect(result.action).toBe("redacted");
     if (result.action === "redacted") {
-      expect(result.text).toContain("[REDACTED]");
       expect(result.text).not.toContain("sk-abc123");
       expect(result.redactedCount).toBeGreaterThan(0);
     }

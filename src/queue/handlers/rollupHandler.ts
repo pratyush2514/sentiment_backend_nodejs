@@ -1,13 +1,60 @@
 import { config } from "../../config.js";
 import { THREAD_ROLLUP_LIMIT } from "../../constants.js";
 import * as db from "../../db/queries.js";
+import { getAnalysisWindowStartTs, isTsWithinAnalysisWindow } from "../../services/analysisWindow.js";
+import { materializeBackfillSummary } from "../../services/backfillSummary.js";
+import {
+  persistCanonicalChannelState,
+  resolveCanonicalChannelState,
+} from "../../services/canonicalChannelState.js";
 import { estimateCost } from "../../services/costEstimator.js";
 import { createEmbeddingProvider } from "../../services/embeddingProvider.js";
+import { eventBus } from "../../services/eventBus.js";
 import { sanitizeForExternalUse } from "../../services/privacyFilter.js";
-import { channelRollup, threadRollup, backfillSummarize, estimateTokens } from "../../services/summarizer.js";
+import { channelRollup, threadRollup } from "../../services/summarizer.js";
 import { logger } from "../../utils/logger.js";
 import type { SummaryRollupJob } from "../jobTypes.js";
 import type { Job } from "pg-boss";
+
+function isSummaryStale(
+  summaryCoverageStartTs: string | null,
+  windowStartTs: string,
+  earliestWindowMessageTs: string | null,
+): boolean {
+  if (!summaryCoverageStartTs) return true;
+
+  const coverageStartTs = Number.parseFloat(summaryCoverageStartTs);
+  const minWindowTs = Number.parseFloat(windowStartTs);
+  if (
+    !Number.isFinite(coverageStartTs) ||
+    coverageStartTs < minWindowTs
+  ) {
+    return true;
+  }
+
+  if (!earliestWindowMessageTs) {
+    return false;
+  }
+
+  const earliestTs = Number.parseFloat(earliestWindowMessageTs);
+  if (!Number.isFinite(earliestTs)) {
+    return true;
+  }
+
+  return coverageStartTs > earliestTs;
+}
+
+function pickLatestSummaryBaseDoc(
+  channelRollupDoc: Awaited<ReturnType<typeof db.getLatestContextDocument>>,
+  backfillRollupDoc: Awaited<ReturnType<typeof db.getLatestContextDocument>>,
+) {
+  if (!channelRollupDoc) return backfillRollupDoc;
+  if (!backfillRollupDoc) return channelRollupDoc;
+
+  return channelRollupDoc.created_at >= backfillRollupDoc.created_at
+    ? channelRollupDoc
+    : backfillRollupDoc;
+}
 
 const log = logger.child({ handler: "summaryRollup" });
 
@@ -15,15 +62,18 @@ export async function handleSummaryRollup(
   jobs: Job<SummaryRollupJob>[],
 ): Promise<void> {
   for (const job of jobs) {
-    const { workspaceId, channelId, rollupType, threadTs } = job.data;
+    const { workspaceId, channelId, rollupType, threadTs, requestedBy } = job.data;
 
-    log.info({ jobId: job.id, channelId, rollupType, threadTs }, "Starting summary rollup");
+    log.info(
+      { jobId: job.id, channelId, rollupType, threadTs, requestedBy: requestedBy ?? "manual" },
+      "Starting summary rollup",
+    );
 
     // Budget check
     const dailyCost = await db.getDailyLLMCost(workspaceId);
     if (dailyCost >= config.LLM_DAILY_BUDGET_USD) {
       log.warn({ dailyCost, budget: config.LLM_DAILY_BUDGET_USD }, "Budget exceeded, skipping rollup");
-      return;
+      continue;
     }
 
     if (rollupType === "channel") {
@@ -31,10 +81,14 @@ export async function handleSummaryRollup(
     } else if (rollupType === "thread" && threadTs) {
       await handleThreadRollup(workspaceId, channelId, threadTs);
     } else if (rollupType === "backfill") {
-      await handleBackfillRollup(workspaceId, channelId);
+      const analysisWindowDays = await db.getEffectiveAnalysisWindowDays(workspaceId, channelId);
+      await handleBackfillRollup(workspaceId, channelId, analysisWindowDays);
     }
 
-    log.info({ jobId: job.id, channelId, rollupType }, "Summary rollup complete");
+    log.info(
+      { jobId: job.id, channelId, rollupType, threadTs, requestedBy: requestedBy ?? "manual" },
+      "Summary rollup complete",
+    );
   }
 }
 
@@ -42,13 +96,42 @@ async function handleChannelRollup(
   workspaceId: string,
   channelId: string,
 ): Promise<void> {
+  const analysisWindowDays = await db.getEffectiveAnalysisWindowDays(workspaceId, channelId);
+  const windowStartTs = getAnalysisWindowStartTs(analysisWindowDays);
   // Find messages since last rollup
-  const lastDoc = await db.getLatestContextDocument(workspaceId, channelId, "channel_rollup");
-  const sinceTs = lastDoc?.source_ts_end ?? "0";
+  const [lastChannelDoc, lastBackfillDoc, earliestWindowMessages] = await Promise.all([
+    db.getLatestContextDocument(workspaceId, channelId, "channel_rollup"),
+    db.getLatestContextDocument(workspaceId, channelId, "backfill_rollup"),
+    db.getMessagesInWindow(workspaceId, channelId, analysisWindowDays, null, 1),
+  ]);
+  const baseDoc = pickLatestSummaryBaseDoc(lastChannelDoc, lastBackfillDoc);
+  const summaryCoverageStartTs = baseDoc?.source_ts_start ?? null;
+  const earliestWindowMessageTs = earliestWindowMessages[0]?.ts ?? null;
+  const sinceTs =
+    baseDoc?.source_ts_end &&
+    Number.parseFloat(baseDoc.source_ts_end) > Number.parseFloat(windowStartTs)
+      ? baseDoc.source_ts_end
+      : windowStartTs;
+
+  // Staleness check: if the saved summary either reaches outside the window
+  // or fails to cover the earliest message inside the current window, rebuild it.
+  const stale = isSummaryStale(
+    summaryCoverageStartTs,
+    windowStartTs,
+    earliestWindowMessageTs,
+  );
+  if (stale) {
+    log.info(
+      { channelId, sinceTs, windowStartTs },
+      "Summary is stale — regenerating from recent window",
+    );
+    await handleBackfillRollup(workspaceId, channelId, analysisWindowDays);
+    return;
+  }
 
   const messages = await db.getMessagesSinceTs(workspaceId, channelId, sinceTs, 200);
   if (messages.length === 0) {
-    log.info({ channelId }, "No new messages for channel rollup");
+    log.debug({ channelId }, "No new messages for channel rollup");
     await db.resetRollupState(workspaceId, channelId);
     return;
   }
@@ -75,11 +158,38 @@ async function handleChannelRollup(
   const channelState = await db.getChannelState(workspaceId, channelId);
   const existingSummary = channelState?.running_summary ?? "";
   const existingDecisions = channelState?.key_decisions_json ?? [];
+  const canonicalState = await resolveCanonicalChannelState(workspaceId, channelId, {
+    channelState,
+  });
+  const relatedIncidents = await db.getRelatedIncidentMentions(
+    workspaceId,
+    channelId,
+    canonicalState.riskState.healthCounts.analysisWindowDays,
+    5,
+  );
 
-  const result = await channelRollup(existingSummary, enrichedMessages, existingDecisions);
+  const result = await channelRollup(
+    existingSummary,
+    enrichedMessages,
+    existingDecisions,
+    {
+      effectiveChannelMode: canonicalState.channelMode.effectiveChannelMode,
+      signal: canonicalState.riskState.signal,
+      health: canonicalState.riskState.health,
+      riskDrivers: canonicalState.riskState.riskDrivers,
+      attentionSummary: canonicalState.riskState.attentionSummary,
+      messageDispositionCounts: canonicalState.riskState.messageDispositionCounts,
+      relatedIncidents: relatedIncidents.map((incident) => ({
+        sourceChannelName: incident.source_channel_name ?? "unknown",
+        message: incident.message_text,
+        detectedAt: incident.detected_at,
+        blocksLocalWork: incident.blocks_local_work,
+      })),
+    },
+  );
   if (!result) {
     log.warn({ channelId }, "Channel rollup LLM call failed");
-    return; // Don't reset counter — pg-boss retry will re-attempt
+    throw new Error(`Channel rollup failed for ${channelId}`);
   }
 
   // Embed the summary
@@ -105,16 +215,25 @@ async function handleChannelRollup(
     content: result.summary,
     tokenCount: result.tokenCount,
     embedding,
-    sourceTsStart: messages[0].ts,
+    sourceTsStart:
+      summaryCoverageStartTs &&
+      Number.parseFloat(summaryCoverageStartTs) >
+        Number.parseFloat(windowStartTs)
+        ? summaryCoverageStartTs
+        : windowStartTs,
     sourceTsEnd: messages[messages.length - 1].ts,
     sourceThreadTs: null,
-    messageCount: messages.length,
+    messageCount: (baseDoc?.message_count ?? 0) + messages.length,
   });
 
   // Update channel state
   await db.upsertChannelState(workspaceId, channelId, {
     running_summary: result.summary,
     key_decisions_json: result.keyDecisions,
+  });
+  await persistCanonicalChannelState(workspaceId, channelId, {
+    channel: canonicalState.channel,
+    rule: canonicalState.rule,
   });
 
   // Reset rollup counter
@@ -127,6 +246,11 @@ async function handleChannelRollup(
   if (embeddingTokens > 0) {
     await recordRollupCost(workspaceId, channelId, config.EMBEDDING_MODEL, embeddingTokens, 0);
   }
+
+  eventBus.createAndPublish("rollup_updated", workspaceId, channelId, {
+    rollupType: "channel",
+    messagesProcessed: messages.length,
+  });
 
   log.info({
     channelId,
@@ -141,18 +265,35 @@ async function handleThreadRollup(
   channelId: string,
   threadTs: string,
 ): Promise<void> {
-  const messages = await db.getMessagesEnriched(workspaceId, channelId, {
-    limit: THREAD_ROLLUP_LIMIT,
-    threadTs,
-  });
+  const analysisWindowDays = await db.getEffectiveAnalysisWindowDays(workspaceId, channelId);
+  const windowStartTs = getAnalysisWindowStartTs(analysisWindowDays);
+  const [threadMessages, channelState, lastChannelDoc, lastBackfillDoc, earliestWindowMessages] = await Promise.all([
+    db.getMessagesEnriched(workspaceId, channelId, {
+      limit: THREAD_ROLLUP_LIMIT,
+      threadTs,
+    }),
+    db.getChannelState(workspaceId, channelId),
+    db.getLatestContextDocument(workspaceId, channelId, "channel_rollup"),
+    db.getLatestContextDocument(workspaceId, channelId, "backfill_rollup"),
+    db.getMessagesInWindow(workspaceId, channelId, analysisWindowDays, null, 1),
+  ]);
+  const messages = threadMessages.filter((message) =>
+    isTsWithinAnalysisWindow(message.ts, analysisWindowDays),
+  );
 
   if (messages.length === 0) {
-    log.info({ channelId, threadTs }, "No messages for thread rollup");
+    log.debug({ channelId, threadTs }, "No messages for thread rollup");
     return;
   }
 
-  const channelState = await db.getChannelState(workspaceId, channelId);
-  const channelSummary = channelState?.running_summary ?? "";
+  const baseSummaryDoc = pickLatestSummaryBaseDoc(lastChannelDoc, lastBackfillDoc);
+  const channelSummary = isSummaryStale(
+    baseSummaryDoc?.source_ts_start ?? null,
+    windowStartTs,
+    earliestWindowMessages[0]?.ts ?? null,
+  )
+    ? ""
+    : channelState?.running_summary ?? "";
 
   const enrichedMessages = messages.map((m) => {
     const rawText = m.normalized_text ?? m.text;
@@ -170,7 +311,7 @@ async function handleThreadRollup(
   const result = await threadRollup(threadTs, enrichedMessages, channelSummary);
   if (!result) {
     log.warn({ channelId, threadTs }, "Thread rollup LLM call failed");
-    return;
+    throw new Error(`Thread rollup failed for ${channelId}:${threadTs}`);
   }
 
   // Embed the summary
@@ -188,11 +329,16 @@ async function handleThreadRollup(
     }
   }
 
+  const threadRollupContent = JSON.stringify({
+    summary: result.summary,
+    openQuestions: result.openQuestions ?? [],
+  });
+
   await db.insertContextDocument({
     workspaceId,
     channelId,
     docType: "thread_rollup",
-    content: result.summary,
+    content: threadRollupContent,
     tokenCount: result.tokenCount,
     embedding,
     sourceTsStart: messages[0].ts,
@@ -201,11 +347,53 @@ async function handleThreadRollup(
     messageCount: messages.length,
   });
 
+  await db.upsertThreadInsight({
+    workspaceId,
+    channelId,
+    threadTs,
+    summary: result.summary,
+    primaryIssue: result.primaryIssue,
+    threadState: result.threadState,
+    emotionalTemperature: result.emotionalTemperature,
+    operationalRisk: result.operationalRisk,
+    surfacePriority: result.surfacePriority,
+    crucialMoments: result.crucialMoments,
+    openQuestions: result.openQuestions ?? [],
+    lastMeaningfulChangeTs:
+      result.crucialMoments[result.crucialMoments.length - 1]?.messageTs ??
+      messages[messages.length - 1]?.ts ??
+      null,
+    sourceTsEnd: messages[messages.length - 1]?.ts ?? null,
+    rawLlmResponse: {
+      summary: result.summary,
+      primary_issue: result.primaryIssue,
+      thread_state: result.threadState,
+      emotional_temperature: result.emotionalTemperature,
+      operational_risk: result.operationalRisk,
+      surface_priority: result.surfacePriority,
+      crucial_moments: result.crucialMoments,
+      open_questions: result.openQuestions ?? [],
+    },
+    llmProvider: config.LLM_PROVIDER,
+    llmModel: result.raw.model,
+    tokenUsage: {
+      promptTokens: result.raw.promptTokens,
+      completionTokens: result.raw.completionTokens,
+    },
+  });
+  await persistCanonicalChannelState(workspaceId, channelId);
+
   // Record costs
   await recordRollupCost(workspaceId, channelId, result.raw.model, result.raw.promptTokens, result.raw.completionTokens);
   if (embeddingTokens > 0) {
     await recordRollupCost(workspaceId, channelId, config.EMBEDDING_MODEL, embeddingTokens, 0);
   }
+
+  eventBus.createAndPublish("rollup_updated", workspaceId, channelId, {
+    rollupType: "thread",
+    threadTs,
+    messagesProcessed: messages.length,
+  });
 
   log.info({ channelId, threadTs, messagesProcessed: messages.length }, "Thread rollup stored");
 }
@@ -213,47 +401,14 @@ async function handleThreadRollup(
 async function handleBackfillRollup(
   workspaceId: string,
   channelId: string,
+  windowDays: number = config.SUMMARY_WINDOW_DAYS,
 ): Promise<void> {
-  const result = await backfillSummarize(workspaceId, channelId);
-  if (!result) {
-    log.info({ channelId }, "Backfill summarization returned no result");
-    return;
-  }
-
-  // Embed the final summary
-  const embeddingProvider = createEmbeddingProvider();
-  let embedding: number[] | null = null;
-
-  if (embeddingProvider) {
-    try {
-      const embResult = await embeddingProvider.embed(result.summary);
-      embedding = embResult.embedding;
-    } catch (err) {
-      log.warn({ err }, "Embedding failed for backfill rollup");
-    }
-  }
-
-  // Store as context document
-  await db.insertContextDocument({
+  await materializeBackfillSummary({
     workspaceId,
     channelId,
-    docType: "backfill_rollup",
-    content: result.summary,
-    tokenCount: estimateTokens(result.summary),
-    embedding,
-    sourceTsStart: null,
-    sourceTsEnd: null,
-    sourceThreadTs: null,
-    messageCount: 0,
+    windowDays,
+    publishEvent: true,
   });
-
-  // Update channel state with LLM-generated summary
-  await db.upsertChannelState(workspaceId, channelId, {
-    running_summary: result.summary,
-    key_decisions_json: result.keyDecisions,
-  });
-
-  log.info({ channelId, decisions: result.keyDecisions.length }, "Backfill rollup complete");
 }
 
 async function recordRollupCost(

@@ -18,7 +18,10 @@ vi.mock("../utils/logger.js", () => ({
 }));
 
 vi.mock("../db/queries.js", () => ({
+  getEffectiveAnalysisWindowDays: vi.fn().mockResolvedValue(7),
   getChannelState: vi.fn().mockResolvedValue(null),
+  getLatestContextDocument: vi.fn().mockResolvedValue(null),
+  getMessagesInWindow: vi.fn().mockResolvedValue([]),
   searchContextDocuments: vi.fn().mockResolvedValue([]),
 }));
 
@@ -38,9 +41,16 @@ const db = await import("../db/queries.js");
 const { createEmbeddingProvider } = await import("./embeddingProvider.js");
 const { assembleContext } = await import("./contextAssembler.js");
 
+function recentTs(offsetSeconds = 0): string {
+  return String(Date.now() / 1000 - offsetSeconds);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(db.getEffectiveAnalysisWindowDays).mockResolvedValue(7);
   vi.mocked(db.getChannelState).mockResolvedValue(null);
+  vi.mocked(db.getLatestContextDocument).mockResolvedValue(null);
+  vi.mocked(db.getMessagesInWindow).mockResolvedValue([]);
   vi.mocked(createEmbeddingProvider).mockReturnValue(null);
 });
 
@@ -55,6 +65,11 @@ describe("assembleContext", () => {
   });
 
   it("includes running summary and key decisions from channel state", async () => {
+    vi.mocked(db.getLatestContextDocument).mockResolvedValueOnce({
+      source_ts_start: String(Date.now() / 1000),
+      source_ts_end: String(Date.now() / 1000),
+      created_at: new Date(),
+    } as never);
     vi.mocked(db.getChannelState).mockResolvedValue({
       running_summary: "Summary text",
       key_decisions_json: ["decision A", "decision B"],
@@ -66,6 +81,23 @@ describe("assembleContext", () => {
     expect(result.keyDecisions).toEqual(["decision A", "decision B"]);
   });
 
+  it("drops stale summary state when coverage predates the analysis window", async () => {
+    vi.mocked(db.getLatestContextDocument).mockResolvedValueOnce({
+      source_ts_start: "1.0",
+      source_ts_end: "2.0",
+      created_at: new Date(0),
+    } as never);
+    vi.mocked(db.getChannelState).mockResolvedValue({
+      running_summary: "Old summary text",
+      key_decisions_json: ["old decision"],
+    } as never);
+
+    const result = await assembleContext("ws", "C1", "target", []);
+
+    expect(result.runningSummary).toBe("");
+    expect(result.keyDecisions).toEqual([]);
+  });
+
   it("skips Layer 3 and redistributes budget when no embedding provider", async () => {
     vi.mocked(db.getChannelState).mockResolvedValue({
       running_summary: "",
@@ -73,8 +105,8 @@ describe("assembleContext", () => {
     } as never);
 
     const messages = [
-      { userId: "U1", text: "message one", ts: "1.1" },
-      { userId: "U2", text: "message two", ts: "1.2" },
+      { userId: "U1", text: "message one", ts: recentTs(30) },
+      { userId: "U2", text: "message two", ts: recentTs(10) },
     ];
 
     const result = await assembleContext("ws", "C1", "target", messages);
@@ -95,7 +127,7 @@ describe("assembleContext", () => {
     const messages = Array.from({ length: 50 }, (_, i) => ({
       userId: `U${i}`,
       text: `This is a relatively long message number ${i} that takes up some token budget space`,
-      ts: `${i}.0`,
+      ts: recentTs(50 - i),
     }));
 
     const result = await assembleContext("ws", "C1", "target", messages);
@@ -105,6 +137,6 @@ describe("assembleContext", () => {
     expect(result.recentMessages.length).toBeLessThan(50);
     // Most recent messages should be included (last in the array)
     const lastIncluded = result.recentMessages[result.recentMessages.length - 1];
-    expect(parseInt(lastIncluded.ts)).toBe(49);
+    expect(lastIncluded.ts).toBe(messages[messages.length - 1]?.ts);
   });
 });

@@ -26,6 +26,20 @@ vi.mock("../db/queries.js", () => ({
 const db = await import("../db/queries.js");
 const { analyticsRouter } = await import("./analytics.js");
 
+function forceLocalhostListen(app: express.Express) {
+  const originalListen = app.listen.bind(app);
+  app.listen = ((...args: unknown[]) => {
+    if (typeof args[0] === "number" && args.length === 1) {
+      return originalListen(args[0], "127.0.0.1");
+    }
+    if (typeof args[0] === "number" && typeof args[1] === "function") {
+      return originalListen(args[0], "127.0.0.1", args[1] as () => void);
+    }
+    return originalListen(...(args as Parameters<typeof originalListen>));
+  }) as typeof app.listen;
+  return app;
+}
+
 function createApp() {
   const app = express();
   app.use(express.json());
@@ -34,7 +48,7 @@ function createApp() {
     next();
   });
   app.use("/api/analytics", analyticsRouter);
-  return app;
+  return forceLocalhostListen(app);
 }
 
 beforeEach(() => {
@@ -114,10 +128,15 @@ describe("Analytics Routes", () => {
         totalMessages: 500,
         totalAnalyses: 25,
         emotionDistribution: { joy: 10, neutral: 8, anger: 5, sadness: 2 },
+        avgSentiment: 0.56,
         highRiskCount: 3,
+        openFollowUpCount: 2,
+        highSeverityFollowUpCount: 1,
+        flaggedMessageCount: 5,
         totalCostUsd: 0.55,
         costTodayUsd: 0.08,
         activeChannels: 2,
+        teamHealth: 78,
       });
 
       const res = await request(createApp()).get("/api/analytics/overview");
@@ -126,7 +145,9 @@ describe("Analytics Routes", () => {
       expect(res.body.totalAnalyses).toBe(25);
       expect(res.body.activeChannels).toBe(2);
       expect(res.body.emotionDistribution.joy).toBe(10);
+      expect(res.body.avgSentiment).toBe(0.56);
       expect(res.body.highRiskCount).toBe(3);
+      expect(res.body.teamHealth).toBe(78);
       expect(res.body.costTodayUsd).toBe(0.08);
     });
   });

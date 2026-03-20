@@ -19,7 +19,7 @@ vi.mock("../utils/logger.js", () => ({
 const { evaluateLLMGate } = await import("./llmGate.js");
 
 function makeChannelState(overrides: Partial<ChannelStateRow> = {}): ChannelStateRow {
-  return {
+  const base: ChannelStateRow = {
     id: "test-id",
     workspace_id: "W123",
     channel_id: "C123",
@@ -27,6 +27,26 @@ function makeChannelState(overrides: Partial<ChannelStateRow> = {}): ChannelStat
     participants_json: {},
     active_threads_json: [],
     key_decisions_json: [],
+    signal: "stable",
+    health: "healthy",
+    signal_confidence: 0.5,
+    risk_drivers_json: [],
+    attention_summary_json: {
+      status: "clear",
+      title: "No active attention",
+      message: "Nothing needs attention right now.",
+      driverKeys: [],
+    },
+    message_disposition_counts_json: {
+      totalInWindow: 0,
+      deepAiAnalyzed: 0,
+      heuristicIncidentSignals: 0,
+      contextOnly: 0,
+      routineAcknowledgments: 0,
+      storedWithoutDeepAnalysis: 0,
+      inFlight: 0,
+    },
+    effective_channel_mode: "collaboration",
     sentiment_snapshot_json: { totalMessages: 0, highRiskCount: 0, updatedAt: "" },
     messages_since_last_llm: 0,
     last_llm_run_at: null,
@@ -35,7 +55,19 @@ function makeChannelState(overrides: Partial<ChannelStateRow> = {}): ChannelStat
     messages_since_last_rollup: 0,
     last_rollup_at: null,
     updated_at: new Date(),
+  };
+
+  return {
+    ...base,
     ...overrides,
+    signal: overrides.signal ?? base.signal,
+    health: overrides.health ?? base.health,
+    signal_confidence: overrides.signal_confidence ?? base.signal_confidence,
+    risk_drivers_json: overrides.risk_drivers_json ?? base.risk_drivers_json,
+    attention_summary_json: overrides.attention_summary_json ?? base.attention_summary_json,
+    message_disposition_counts_json:
+      overrides.message_disposition_counts_json ?? base.message_disposition_counts_json,
+    effective_channel_mode: overrides.effective_channel_mode ?? base.effective_channel_mode,
   };
 }
 
@@ -113,26 +145,23 @@ describe("evaluateLLMGate", () => {
     expect(evaluateLLMGate("normal message", state)).toBeNull();
   });
 
-  it("thread reply bypasses cooldown and triggers risk", () => {
-    const futureTime = new Date(Date.now() + 30_000); // channel is in cooldown
+  it("thread reply still triggers risk even when the channel is in cooldown", () => {
+    const futureTime = new Date(Date.now() + 30_000);
     const state = makeChannelState({
       messages_since_last_llm: 2,
       llm_cooldown_until: futureTime,
     });
-    // "furious" + "terrible" + "unacceptable" = 0.9 >= 0.7
-    // Channel cooldown would block this, but threadTs bypasses it
     const result = evaluateLLMGate("I am furious, this is terrible and unacceptable", state, "1234567890.123456");
     expect(result).toBe("risk");
   });
 
-  it("thread reply bypasses cooldown and triggers threshold", () => {
-    const futureTime = new Date(Date.now() + 30_000); // channel is in cooldown
+  it("thread reply does not trigger threshold-based analysis", () => {
+    const futureTime = new Date(Date.now() + 30_000);
     const state = makeChannelState({
       messages_since_last_llm: 25,
       llm_cooldown_until: futureTime,
     });
-    // Channel cooldown would block this, but threadTs bypasses it
     const result = evaluateLLMGate("normal message", state, "1234567890.123456");
-    expect(result).toBe("threshold");
+    expect(result).toBeNull();
   });
 });

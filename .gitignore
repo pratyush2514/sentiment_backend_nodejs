@@ -9,4 +9,5 @@ coverage/
 .vscode/
 .idea/
 *.tgz
-.claude/
+.claude/**
+/.claude-*/

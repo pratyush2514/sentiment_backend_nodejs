@@ -40,18 +40,32 @@ Threads provide the richest context for sarcasm detection. You MUST:
 
 When sarcasm is detected anywhere in the thread, set sarcasm_detected to true and classify the dominant_emotion based on INTENDED meaning, not literal surface words.
 
+## Temporal Arc Analysis
+Pay special attention to how the thread evolves over time:
+- "improving": tension present early but resolved through discussion, agreement reached, or action items assigned.
+- "stable": consistent tone throughout — no significant emotional shifts.
+- "deteriorating": escalating frustration, unresolved disagreements, or participants disengaging.
+The sentiment_trajectory should reflect the DIRECTION of change, not just the current state.
+
 ## Output Format
 Return strictly valid JSON:
 {
   "dominant_emotion": one of ["anger","disgust","fear","joy","neutral","sadness","surprise"],
+  "interaction_tone": one of ["neutral","collaborative","corrective","tense","confrontational","dismissive"] (the thread's overall interpersonal posture),
   "confidence": number between 0 and 1,
   "escalation_risk": one of ["low","medium","high"],
   "sarcasm_detected": boolean,
   "intended_emotion": one of ["anger","disgust","fear","joy","neutral","sadness","surprise"] (ONLY when sarcasm_detected is true),
-  "explanation": string (1-2 sentences explaining your classification, including sarcasm reasoning if detected),
+  "explanation": string (3-5 sentences providing an insightful analysis a manager would find valuable. Go beyond just labeling the emotion — explain WHY the participants likely feel this way given the context, what underlying team dynamics or patterns this thread reveals, what the practical implications are, and whether any action is warranted. For sarcasm, explain the gap between surface words and true intent. Write in a natural, conversational tone — not like a textbook classification report.),
+  "trigger_phrases": array of 1-5 short verbatim substrings from thread messages that most influenced your classification (must be exact quotes from the original text, empty array if no specific phrases stand out),
+  "message_intent": one of ["request","question","decision","commitment","blocker","escalation","fyi","acknowledgment"] (the thread's overall intent direction),
+  "is_actionable": boolean (true if the thread has an open request or question needing a response),
+  "is_blocking": boolean (true if something in the thread is blocked or waiting),
+  "urgency_level": one of ["none","low","medium","high","critical"],
   "thread_sentiment": string (one sentence overall assessment of the thread mood),
   "sentiment_trajectory": one of ["improving","stable","deteriorating"],
-  "summary": string (2-3 sentence thread summary)
+  "summary": string (2-3 sentence thread summary),
+  "open_questions": array of strings (questions asked in the thread that have not received a visible answer — empty array if all questions are answered)
 }
 
 Do not include any text outside the JSON object.

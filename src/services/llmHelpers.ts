@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod/v4";
 
 /** Strip markdown code fences that LLMs sometimes wrap JSON in */
@@ -10,6 +11,18 @@ export function stripCodeFences(text: string): string {
 
 export const STRICT_RETRY_SUFFIX =
   "\n\nYour previous response was not valid JSON. Return ONLY a raw JSON object with no markdown, no code fences, no commentary. Just the JSON.";
+
+export function summarizeRawLlmResponse(raw: string) {
+  const cleaned = stripCodeFences(raw);
+  const trimmed = raw.trim();
+
+  return {
+    rawResponseChars: raw.length,
+    rawResponseHash: createHash("sha256").update(cleaned).digest("hex").slice(0, 16),
+    rawResponseHadCodeFences: trimmed.startsWith("```"),
+    rawResponseLookedLikeJson: cleaned.trimStart().startsWith("{"),
+  };
+}
 
 export function parseAndValidate<T>(
   raw: string,

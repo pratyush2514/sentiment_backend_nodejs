@@ -7,9 +7,11 @@ import {
 } from "../constants.js";
 import * as db from "../db/queries.js";
 import { logger } from "../utils/logger.js";
+import { getAnalysisWindowStartTs } from "./analysisWindow.js";
 import { createEmbeddingProvider } from "./embeddingProvider.js";
 import { sanitizeForExternalUse } from "./privacyFilter.js";
 import { estimateTokens, truncateToTokens } from "./summarizer.js";
+import { normalizeSummaryForLLM } from "./summaryState.js";
 
 const log = logger.child({ module: "contextAssembler" });
 
@@ -19,6 +21,53 @@ export interface AssembledContext {
   relevantDocuments: string[];
   recentMessages: Array<{ userId: string; text: string; ts: string }>;
   totalTokens: number;
+}
+
+function pickLatestSummaryBaseDoc(
+  channelRollupDoc: Awaited<ReturnType<typeof db.getLatestContextDocument>>,
+  backfillRollupDoc: Awaited<ReturnType<typeof db.getLatestContextDocument>>,
+) {
+  if (!channelRollupDoc) return backfillRollupDoc;
+  if (!backfillRollupDoc) return channelRollupDoc;
+
+  return channelRollupDoc.created_at >= backfillRollupDoc.created_at
+    ? channelRollupDoc
+    : backfillRollupDoc;
+}
+
+function hasFreshSummaryCoverage(
+  doc: Awaited<ReturnType<typeof db.getLatestContextDocument>>,
+  windowStartTs: string,
+  earliestWindowMessageTs: string | null,
+): boolean {
+  if (!doc?.source_ts_start || !doc.source_ts_end) {
+    return false;
+  }
+
+  const sourceStartTs = Number.parseFloat(doc.source_ts_start);
+  const sourceEndTs = Number.parseFloat(doc.source_ts_end);
+  const minWindowTs = Number.parseFloat(windowStartTs);
+  if (
+    !Number.isFinite(sourceStartTs) ||
+    !Number.isFinite(sourceEndTs) ||
+    sourceStartTs < minWindowTs ||
+    sourceEndTs < minWindowTs
+  ) {
+    return false;
+  }
+
+  if (!earliestWindowMessageTs) {
+    return true;
+  }
+
+  const earliestTs = Number.parseFloat(earliestWindowMessageTs);
+  if (!Number.isFinite(earliestTs)) {
+    return false;
+  }
+
+  return (
+    sourceStartTs <= earliestTs
+  );
 }
 
 /**
@@ -40,18 +89,37 @@ export async function assembleContext(
   recentMessages: Array<{ userId: string; text: string; ts: string }>,
 ): Promise<AssembledContext> {
   const totalBudget = config.CONTEXT_TOKEN_BUDGET;
-  const state = await db.getChannelState(workspaceId, channelId);
+  const analysisWindowDays = await db.getEffectiveAnalysisWindowDays(workspaceId, channelId);
+  const windowStartTs = getAnalysisWindowStartTs(analysisWindowDays);
+  const [state, lastChannelDoc, lastBackfillDoc, earliestWindowMessages] = await Promise.all([
+    db.getChannelState(workspaceId, channelId),
+    db.getLatestContextDocument(workspaceId, channelId, "channel_rollup"),
+    db.getLatestContextDocument(workspaceId, channelId, "backfill_rollup"),
+    db.getMessagesInWindow(workspaceId, channelId, analysisWindowDays, null, 1),
+  ]);
+  const baseSummaryDoc = pickLatestSummaryBaseDoc(lastChannelDoc, lastBackfillDoc);
+  const earliestWindowMessageTs = earliestWindowMessages[0]?.ts ?? null;
+  const useFreshSummary = hasFreshSummaryCoverage(
+    baseSummaryDoc,
+    windowStartTs,
+    earliestWindowMessageTs,
+  );
+  const windowedRecentMessages = recentMessages.filter(
+    (message) => Number.parseFloat(message.ts) >= Number.parseFloat(windowStartTs),
+  );
 
   // ─── Layer 1: Running Summary (30%) ─────────────────────────────────────
   const layer1Budget = Math.floor(totalBudget * CONTEXT_LAYER_SUMMARY_PCT);
-  const rawSummary = state?.running_summary ?? "";
+  const rawSummary = useFreshSummary
+    ? normalizeSummaryForLLM(state?.running_summary)
+    : "";
   const summary = truncateToTokens(rawSummary, layer1Budget);
   const summaryTokens = estimateTokens(summary);
   let surplus = layer1Budget - summaryTokens;
 
   // ─── Layer 2: Key Decisions (10% + surplus) ─────────────────────────────
   const layer2Budget = Math.floor(totalBudget * CONTEXT_LAYER_DECISIONS_PCT) + surplus;
-  const decisions = state?.key_decisions_json ?? [];
+  const decisions = useFreshSummary ? (state?.key_decisions_json ?? []) : [];
   const decisionsText = decisions.map((d) => `- ${d}`).join("\n");
   const truncatedDecisions = truncateToTokens(decisionsText, layer2Budget);
   const decisionsTokens = estimateTokens(truncatedDecisions);
@@ -77,6 +145,8 @@ export async function assembleContext(
         channelId,
         embeddingResult.embedding,
         5,
+        windowStartTs,
+        earliestWindowMessageTs,
       );
 
       let usedTokens = 0;
@@ -103,7 +173,7 @@ export async function assembleContext(
 
   // Pack messages from most recent (they're already in chronological order)
   // Iterate from newest to oldest, then reverse at the end
-  const reversed = [...recentMessages].reverse();
+  const reversed = [...windowedRecentMessages].reverse();
   for (const msg of reversed) {
     const tokenCost = estimateTokens(`[${msg.userId}] ${msg.text}`);
     if (msgTokens + tokenCost > layer4Budget) break;
@@ -117,6 +187,8 @@ export async function assembleContext(
 
   log.debug({
     channelId,
+    analysisWindowDays,
+    summaryFresh: useFreshSummary,
     summaryTokens,
     decisionsTokens,
     docsCount: relevantDocuments.length,

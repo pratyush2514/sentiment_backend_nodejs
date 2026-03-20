@@ -7,20 +7,39 @@ import { config } from "../config.js";
 import { logger } from "../utils/logger.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const MIGRATION_LOCK_KEY = 17430120;
 
-// Direct connection — used by pg-boss (LISTEN/NOTIFY) and migrations
+// Direct connection — used for migrations only (pg-boss has its own pool)
 export const directPool = new pg.Pool({
   connectionString: config.DATABASE_URL,
-  max: 5,
+  max: 1,
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10_000,
 });
 
 // Pooled connection — used for application queries
 export const pool = new pg.Pool({
   connectionString: config.DATABASE_URL_POOLED ?? config.DATABASE_URL,
-  max: 20,
+  max: 10,
   idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 10_000,
   statement_timeout: config.REQUEST_TIMEOUT_MS,
   idle_in_transaction_session_timeout: config.REQUEST_TIMEOUT_MS,
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10_000,
+});
+
+// Handle idle connection errors gracefully.
+// When Supabase PgBouncer closes idle connections, pg emits an error on the
+// pool. Without this handler, the error becomes an uncaught exception and
+// crashes the process. The pool automatically removes the dead connection
+// and creates a new one on the next query.
+pool.on("error", (err) => {
+  logger.warn({ err: err.message, code: (err as NodeJS.ErrnoException).code }, "Pool idle client error (connection will be replaced)");
+});
+
+directPool.on("error", (err) => {
+  logger.warn({ err: err.message, code: (err as NodeJS.ErrnoException).code }, "Direct pool idle client error (connection will be replaced)");
 });
 
 // Supabase JS client (optional — for convenience queries)
@@ -35,22 +54,57 @@ export function getSupabase(): SupabaseClient | null {
   return null;
 }
 
-export async function runMigrations(): Promise<void> {
+async function ensureMigrationTable(client: pg.PoolClient): Promise<void> {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      filename TEXT PRIMARY KEY,
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+}
+
+function listMigrationFiles(): string[] {
   const migrationsDir = path.join(__dirname, "migrations");
-  const files = fs
+  return fs
     .readdirSync(migrationsDir)
     .filter((f) => f.endsWith(".sql"))
     .sort();
+}
+
+export async function getMigrationStatus(): Promise<{
+  applied: string[];
+  pending: string[];
+  upToDate: boolean;
+}> {
+  const client = await directPool.connect();
+  try {
+    await ensureMigrationTable(client);
+    const files = listMigrationFiles();
+    const appliedResult = await client.query<{ filename: string }>(
+      `SELECT filename FROM schema_migrations ORDER BY filename`,
+    );
+    const applied = appliedResult.rows.map((row) => row.filename);
+    const appliedSet = new Set(applied);
+    const pending = files.filter((file) => !appliedSet.has(file));
+
+    return {
+      applied,
+      pending,
+      upToDate: pending.length === 0,
+    };
+  } finally {
+    client.release();
+  }
+}
+
+export async function runMigrations(): Promise<void> {
+  const migrationsDir = path.join(__dirname, "migrations");
+  const files = listMigrationFiles();
 
   const client = await directPool.connect();
   try {
-    // Ensure migration tracking table exists
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS schema_migrations (
-        filename TEXT PRIMARY KEY,
-        applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `);
+    await client.query(`SELECT pg_advisory_lock($1)`, [MIGRATION_LOCK_KEY]);
+    await ensureMigrationTable(client);
 
     // Find already-applied migrations
     const applied = await client.query<{ filename: string }>(
@@ -83,6 +137,9 @@ export async function runMigrations(): Promise<void> {
       }
     }
   } finally {
+    await client
+      .query(`SELECT pg_advisory_unlock($1)`, [MIGRATION_LOCK_KEY])
+      .catch(() => undefined);
     client.release();
   }
 }
@@ -93,6 +150,16 @@ export async function checkConnection(): Promise<boolean> {
     return result.rows[0]?.ok === 1;
   } catch (err) {
     logger.error({ err }, "Database connection check failed");
+    return false;
+  }
+}
+
+export async function checkDirectConnection(): Promise<boolean> {
+  try {
+    const result = await directPool.query("SELECT 1 AS ok");
+    return result.rows[0]?.ok === 1;
+  } catch (err) {
+    logger.error({ err }, "Direct database connection check failed");
     return false;
   }
 }

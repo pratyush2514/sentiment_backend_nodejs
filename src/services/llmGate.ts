@@ -11,8 +11,9 @@ export type TriggerType = "risk" | "threshold" | "time" | "manual";
  * Evaluates whether an LLM analysis should be triggered.
  * Returns the trigger type if any condition fires, or null to skip.
  *
- * Thread replies bypass cooldown — threads are independent conversations
- * and should be eligible for analysis even when the channel is cooling down.
+ * Thread replies are only auto-analyzed when they are genuinely risky.
+ * Routine thread motion should be summarized at the thread level instead of
+ * paying for per-message LLM analysis.
  *
  * Does NOT handle enqueuing or state reset — caller is responsible for that.
  */
@@ -22,17 +23,26 @@ export function evaluateLLMGate(
   threadTs?: string | null,
 ): TriggerType | null {
   const isThread = !!threadTs;
-  const inCooldown = !isThread && isInCooldown(channelState);
+  const inCooldown = isInCooldown(channelState);
 
-  // Trigger 1: High risk score
+  // Trigger 1: High risk score (bypass cooldowns and applies to both channel + thread messages)
   const riskScore = computeRiskScore(normalizedText);
-  if (riskScore >= config.LLM_RISK_THRESHOLD && !inCooldown) {
+  if (riskScore >= config.LLM_RISK_THRESHOLD) {
     log.info(
       { riskScore, threshold: config.LLM_RISK_THRESHOLD, channelId: channelState.channel_id, isThread },
       "LLM gate triggered: risk score",
     );
     return "risk";
   }
+
+  // Threads should usually wait for rollups/turning points instead of getting
+  // threshold/time based per-message analysis.
+  if (isThread) {
+    return null;
+  }
+
+  // If we're in a cooldown period, normal thresholds (message count/time) skip
+  if (inCooldown) return null;
 
   // Trigger 2: Message count threshold
   if (channelState.messages_since_last_llm >= config.LLM_MSG_THRESHOLD && !inCooldown) {

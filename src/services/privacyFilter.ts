@@ -1,7 +1,4 @@
 import { config } from "../config.js";
-import { logger } from "../utils/logger.js";
-
-const log = logger.child({ module: "privacyFilter" });
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -29,12 +26,26 @@ export interface PrivacyDetectionResult {
   score: number;
 }
 
+export interface SanitizeTelemetry {
+  categories: SensitiveCategory[];
+  matchCount: number;
+  score: number;
+}
+
 export type PrivacyMode = "off" | "redact" | "skip";
 
 export type SanitizeResult =
-  | { action: "passthrough"; text: string }
-  | { action: "redacted"; text: string; redactedCount: number }
-  | { action: "skipped" };
+  | { action: "passthrough"; text: string; telemetry: null }
+  | { action: "redacted"; text: string; redactedCount: number; telemetry: SanitizeTelemetry }
+  | { action: "skipped"; telemetry: SanitizeTelemetry };
+
+export interface SanitizeSummary {
+  sensitiveMessageCount: number;
+  redactedMessageCount: number;
+  skippedMessageCount: number;
+  categories: SensitiveCategory[];
+  highestScore: number;
+}
 
 // ─── Detection Patterns ─────────────────────────────────────────────────────
 // Compiled once at module load for performance.
@@ -45,7 +56,7 @@ interface PatternDef {
   score: number;
 }
 
-const REDACTED_PLACEHOLDER = "[REDACTED]";
+const REDACTED_PLACEHOLDER = " "; // Neutral placeholder to avoid polluting LLM context
 
 const PATTERNS: PatternDef[] = [
   // API keys: OpenAI sk-, Slack xox[bpras]-, GitHub ghp_/glpat-, AWS AKIA
@@ -199,22 +210,22 @@ export function sanitizeForExternalUse(
   const effectiveMode = mode ?? (config.PRIVACY_MODE as PrivacyMode);
 
   if (effectiveMode === "off") {
-    return { action: "passthrough", text };
+    return { action: "passthrough", text, telemetry: null };
   }
 
   const detection = detectSensitiveContent(text);
 
   if (!detection.hasSensitiveContent) {
-    return { action: "passthrough", text };
+    return { action: "passthrough", text, telemetry: null };
   }
-
-  log.info(
-    { categories: [...new Set(detection.matches.map((m) => m.category))], score: detection.score },
-    "Sensitive content detected",
-  );
+  const telemetry: SanitizeTelemetry = {
+    categories: [...new Set(detection.matches.map((m) => m.category))],
+    matchCount: detection.matches.length,
+    score: detection.score,
+  };
 
   if (effectiveMode === "skip") {
-    return { action: "skipped" };
+    return { action: "skipped", telemetry };
   }
 
   // effectiveMode === "redact"
@@ -223,5 +234,43 @@ export function sanitizeForExternalUse(
     action: "redacted",
     text: redacted,
     redactedCount: detection.matches.length,
+    telemetry,
+  };
+}
+
+export function summarizeSanitizeResults(
+  results: readonly SanitizeResult[],
+): SanitizeSummary {
+  const categories = new Set<SensitiveCategory>();
+  let sensitiveMessageCount = 0;
+  let redactedMessageCount = 0;
+  let skippedMessageCount = 0;
+  let highestScore = 0;
+
+  for (const result of results) {
+    if (!result.telemetry) {
+      continue;
+    }
+
+    sensitiveMessageCount += 1;
+    highestScore = Math.max(highestScore, result.telemetry.score);
+
+    for (const category of result.telemetry.categories) {
+      categories.add(category);
+    }
+
+    if (result.action === "redacted") {
+      redactedMessageCount += 1;
+    } else if (result.action === "skipped") {
+      skippedMessageCount += 1;
+    }
+  }
+
+  return {
+    sensitiveMessageCount,
+    redactedMessageCount,
+    skippedMessageCount,
+    categories: [...categories],
+    highestScore,
   };
 }
