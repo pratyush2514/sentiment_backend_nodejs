@@ -63,7 +63,7 @@ export async function startQueue(
     connectionString: config.DATABASE_URL, // Direct connection for LISTEN/NOTIFY
     schema: "pgboss",
     monitorIntervalSeconds: 10,
-    max: 6, // Raised from 2 — backfill + LLM jobs + monitor + cron need concurrent connections
+    max: config.PGBOSS_MAX_CONNECTIONS,
     connectionTimeoutMillis: 30_000, // Allow more time during connection spikes
   });
 

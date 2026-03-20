@@ -19,6 +19,9 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   // Pooled connection for application queries (optional, falls back to DATABASE_URL)
   DATABASE_URL_POOLED: z.string().optional(),
+  DB_POOL_MAX: z.coerce.number().int().positive().default(5),
+  DIRECT_DB_POOL_MAX: z.coerce.number().int().positive().default(1),
+  PGBOSS_MAX_CONNECTIONS: z.coerce.number().int().positive().default(3),
 
   // Supabase client (optional — used for convenience queries)
   SUPABASE_URL: z.string().optional(),

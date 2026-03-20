@@ -12,7 +12,7 @@ const MIGRATION_LOCK_KEY = 17430120;
 // Direct connection — used for migrations only (pg-boss has its own pool)
 export const directPool = new pg.Pool({
   connectionString: config.DATABASE_URL,
-  max: 1,
+  max: config.DIRECT_DB_POOL_MAX,
   keepAlive: true,
   keepAliveInitialDelayMillis: 10_000,
 });
@@ -20,7 +20,7 @@ export const directPool = new pg.Pool({
 // Pooled connection — used for application queries
 export const pool = new pg.Pool({
   connectionString: config.DATABASE_URL_POOLED ?? config.DATABASE_URL,
-  max: 10,
+  max: config.DB_POOL_MAX,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 10_000,
   statement_timeout: config.REQUEST_TIMEOUT_MS,
