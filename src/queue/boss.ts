@@ -417,8 +417,6 @@ export async function cancelWorkspaceJobs(workspaceId: string): Promise<number> 
 
 export async function stopQueue(): Promise<void> {
   if (boss) {
-    await boss.stop({ graceful: true, timeout: 10_000 });
-    boss = null;
     queueRuntimeState = {
       started: false,
       workersRegistered: false,
@@ -427,6 +425,8 @@ export async function stopQueue(): Promise<void> {
       queueStarted: false,
       workersRegistered: false,
     });
+    await boss.stop({ graceful: true, timeout: 10_000 });
+    boss = null;
     log.info("pg-boss stopped");
   }
 }

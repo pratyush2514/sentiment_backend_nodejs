@@ -42,6 +42,10 @@ vi.mock("../db/queries.js", () => ({
 
 vi.mock("../queue/boss.js", () => ({
   getQueue: vi.fn(),
+  getQueueRuntimeState: vi.fn().mockReturnValue({
+    started: true,
+    workersRegistered: true,
+  }),
   enqueueBackfill: vi.fn().mockResolvedValue("job-backfill-recovery"),
   enqueueSummaryRollup: vi.fn().mockResolvedValue("job-rollup-recovery"),
 }));
@@ -90,6 +94,10 @@ describe("runQueueMaintenanceOnce", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(bossModule.getQueueRuntimeState).mockReturnValue({
+      started: true,
+      workersRegistered: true,
+    } as never);
     vi.mocked(bossModule.getQueue).mockReturnValue(fakeBoss as never);
     fakeBoss.findJobs.mockImplementation(async (queueName: string) => (
       queueName === "summary.rollup" ? [makeFailedJob("failed-job-1")] : []
@@ -145,5 +153,13 @@ describe("runQueueMaintenanceOnce", () => {
       rollupType: "thread",
       requestedBy: "manual",
     });
+  });
+
+  it("quietly skips when pg-boss is shutting down", async () => {
+    fakeBoss.supervise.mockRejectedValueOnce(
+      new Error("Database connection is not opened"),
+    );
+
+    await expect(runQueueMaintenanceOnce()).resolves.toBeUndefined();
   });
 });

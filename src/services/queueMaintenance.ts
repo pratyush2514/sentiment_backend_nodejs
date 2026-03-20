@@ -4,6 +4,7 @@ import {
   enqueueBackfill,
   enqueueSummaryRollup,
   getQueue,
+  getQueueRuntimeState,
 } from "../queue/boss.js";
 import { JOB_NAMES } from "../queue/jobTypes.js";
 import { logger } from "../utils/logger.js";
@@ -40,6 +41,13 @@ function trackRecoveredJob(jobId: string): void {
 
 let maintenanceTimer: ReturnType<typeof setTimeout> | null = null;
 let maintenanceRunning = false;
+
+function isQueueShutdownError(err: unknown): boolean {
+  return err instanceof Error && (
+    err.message.includes("Database connection is not opened") ||
+    err.message.includes("Queue not started")
+  );
+}
 
 function isRecentFailure(job: JobWithMetadata<unknown>): boolean {
   const referenceTime = job.completedOn ?? job.startedOn ?? job.createdOn;
@@ -216,33 +224,46 @@ async function recoverStaleArtifacts(): Promise<number> {
 }
 
 export async function runQueueMaintenanceOnce(): Promise<void> {
+  const queueState = getQueueRuntimeState();
+  if (!queueState.started) {
+    return;
+  }
+
   const boss = getQueue();
   if (!boss) {
     return;
   }
 
-  await boss.supervise();
+  try {
+    await boss.supervise();
 
-  const retriedFailedJobs = await retryRecentFailedJobs(boss);
-  const recoveredChannels = await recoverStaleChannels();
-  const normalizedHistoricalMessages = await normalizeHistoricalBackfillMessages();
-  const recoveredArtifacts = await recoverStaleArtifacts();
+    const retriedFailedJobs = await retryRecentFailedJobs(boss);
+    const recoveredChannels = await recoverStaleChannels();
+    const normalizedHistoricalMessages = await normalizeHistoricalBackfillMessages();
+    const recoveredArtifacts = await recoverStaleArtifacts();
 
-  if (
-    retriedFailedJobs > 0 ||
-    recoveredChannels > 0 ||
-    normalizedHistoricalMessages > 0 ||
-    recoveredArtifacts > 0
-  ) {
-    log.info(
-      {
-        retriedFailedJobs,
-        recoveredChannels,
-        normalizedHistoricalMessages,
-        recoveredArtifacts,
-      },
-      "Queue maintenance recovered stale work",
-    );
+    if (
+      retriedFailedJobs > 0 ||
+      recoveredChannels > 0 ||
+      normalizedHistoricalMessages > 0 ||
+      recoveredArtifacts > 0
+    ) {
+      log.info(
+        {
+          retriedFailedJobs,
+          recoveredChannels,
+          normalizedHistoricalMessages,
+          recoveredArtifacts,
+        },
+        "Queue maintenance recovered stale work",
+      );
+    }
+  } catch (err) {
+    if (isQueueShutdownError(err)) {
+      log.info("Queue maintenance skipped because the queue is shutting down");
+      return;
+    }
+    throw err;
   }
 }
 
