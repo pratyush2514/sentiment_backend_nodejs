@@ -8,7 +8,6 @@ dist
 .idea
 .claude
 docs
-scripts
 coverage
 *.md
 *.log
