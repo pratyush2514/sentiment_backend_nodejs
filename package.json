@@ -9,7 +9,7 @@
   "scripts": {
     "dev:https": "tsx watch src/index.ts",
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-migrations.mjs",
     "start": "node dist/index.js",
     "start:prod": "NODE_ENV=production node dist/index.js",
     "start:web": "RUNTIME_ROLE=web node dist/index.js",

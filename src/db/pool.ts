@@ -63,8 +63,26 @@ async function ensureMigrationTable(client: pg.PoolClient): Promise<void> {
   `);
 }
 
+function resolveMigrationsDir(): string {
+  const candidates = [
+    path.join(__dirname, "migrations"),
+    path.resolve(process.cwd(), "dist/db/migrations"),
+    path.resolve(process.cwd(), "src/db/migrations"),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+      return candidate;
+    }
+  }
+
+  throw new Error(
+    `Migration directory not found. Checked: ${candidates.join(", ")}`,
+  );
+}
+
 function listMigrationFiles(): string[] {
-  const migrationsDir = path.join(__dirname, "migrations");
+  const migrationsDir = resolveMigrationsDir();
   return fs
     .readdirSync(migrationsDir)
     .filter((f) => f.endsWith(".sql"))
@@ -98,7 +116,7 @@ export async function getMigrationStatus(): Promise<{
 }
 
 export async function runMigrations(): Promise<void> {
-  const migrationsDir = path.join(__dirname, "migrations");
+  const migrationsDir = resolveMigrationsDir();
   const files = listMigrationFiles();
 
   const client = await directPool.connect();
