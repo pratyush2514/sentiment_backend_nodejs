@@ -175,11 +175,23 @@ function makeHealthCounts(
 function forceLocalhostListen(app: express.Express) {
   const originalListen = app.listen.bind(app);
   app.listen = ((...args: unknown[]) => {
-    if (typeof args[0] === "number" && args.length === 1) {
-      return originalListen(args[0], "127.0.0.1");
+    if (args.length === 0) {
+      return originalListen(0, "127.0.0.1");
     }
-    if (typeof args[0] === "number" && typeof args[1] === "function") {
-      return originalListen(args[0], "127.0.0.1", args[1] as () => void);
+    if (typeof args[0] === "function") {
+      return originalListen(0, "127.0.0.1", args[0] as () => void);
+    }
+    if (typeof args[0] === "number") {
+      const [port, hostOrCallback, maybeCallback] = args;
+      if (args.length === 1 || hostOrCallback == null) {
+        return originalListen(port, "127.0.0.1");
+      }
+      if (typeof hostOrCallback === "function") {
+        return originalListen(port, "127.0.0.1", hostOrCallback as () => void);
+      }
+      if (typeof hostOrCallback === "string") {
+        return originalListen(port, "127.0.0.1", maybeCallback as (() => void) | undefined);
+      }
     }
     return originalListen(...(args as Parameters<typeof originalListen>));
   }) as typeof app.listen;

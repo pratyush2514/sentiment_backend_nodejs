@@ -9,6 +9,12 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  SLACK_SIGNING_SECRET: ci-test-signing-secret
+  DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/testdb
+  OPENAI_API_KEY: ci-openai-key
+  API_AUTH_TOKEN: ci-api-token
+
 jobs:
   lint:
     name: Lint

@@ -55,6 +55,32 @@ const db = await import("../db/queries.js");
 const boss = await import("../queue/boss.js");
 const { authRouter } = await import("./auth.js");
 
+function forceLocalhostListen(app: express.Express) {
+  const originalListen = app.listen.bind(app);
+  app.listen = ((...args: unknown[]) => {
+    if (args.length === 0) {
+      return originalListen(0, "127.0.0.1");
+    }
+    if (typeof args[0] === "function") {
+      return originalListen(0, "127.0.0.1", args[0] as () => void);
+    }
+    if (typeof args[0] === "number") {
+      const [port, hostOrCallback, maybeCallback] = args;
+      if (args.length === 1 || hostOrCallback == null) {
+        return originalListen(port, "127.0.0.1");
+      }
+      if (typeof hostOrCallback === "function") {
+        return originalListen(port, "127.0.0.1", hostOrCallback as () => void);
+      }
+      if (typeof hostOrCallback === "string") {
+        return originalListen(port, "127.0.0.1", maybeCallback as (() => void) | undefined);
+      }
+    }
+    return originalListen(...(args as Parameters<typeof originalListen>));
+  }) as typeof app.listen;
+  return app;
+}
+
 function createApp() {
   const app = express();
   app.use(express.json());
@@ -63,7 +89,7 @@ function createApp() {
     next();
   });
   app.use("/api/auth", authRouter);
-  return app;
+  return forceLocalhostListen(app);
 }
 
 beforeEach(() => {
