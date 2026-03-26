@@ -146,7 +146,7 @@ describe("fathomRouter", () => {
     vi.mocked(db.getFathomConnection).mockResolvedValue(
       makeConnection({
         historical_sync_status: "running",
-        historical_sync_started_at: new Date("2026-03-26T10:00:00.000Z"),
+        historical_sync_started_at: new Date(Date.now() - 5 * 60 * 1000),
       }) as never,
     );
 
