@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { z } from "zod/v4";
+import { envBoolean } from "./utils/envBoolean.js";
 
 const envSchema = z.object({
   // Slack
@@ -37,7 +38,7 @@ const envSchema = z.object({
   RUNTIME_ROLE: z
     .enum(["all", "web", "worker", "scheduler"])
     .default("all"),
-  RUN_MIGRATIONS_ON_BOOT: z.coerce.boolean().optional(),
+  RUN_MIGRATIONS_ON_BOOT: envBoolean(),
 
   // API Authentication (required in production, enforced by middleware)
   API_AUTH_TOKEN: z.string().optional(),
@@ -52,7 +53,7 @@ const envSchema = z.object({
   SSE_HEARTBEAT_MS: z.coerce.number().int().positive().default(30_000),
 
   // Proxy & Timeouts
-  TRUST_PROXY: z.coerce.boolean().default(false),
+  TRUST_PROXY: envBoolean(false),
   REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
   SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
   HEALTHCHECK_DB_TIMEOUT_MS: z.coerce.number().int().positive().default(3_000),
@@ -126,8 +127,8 @@ const envSchema = z.object({
   ENCRYPTION_KEY: z.string().optional().default(""),
 
   // Fathom Meeting Integration
-  FATHOM_ENABLED: z.coerce.boolean().default(false),
-  FATHOM_ALLOW_INSECURE_WEBHOOKS: z.coerce.boolean().default(false),
+  FATHOM_ENABLED: envBoolean(false),
+  FATHOM_ALLOW_INSECURE_WEBHOOKS: envBoolean(false),
   FATHOM_WEBHOOK_SECRET: z.string().optional().default(""),
   FATHOM_DEFAULT_OBLIGATION_SLA_HOURS: z.coerce.number().positive().default(72),
   FATHOM_MAX_TRANSCRIPT_TOKENS: z.coerce.number().int().positive().default(8000),
@@ -136,7 +137,7 @@ const envSchema = z.object({
   // Channel Classification
   LLM_INFRA_BUDGET_USD: z.coerce.number().positive().default(5.0),
   CLASSIFICATION_RERUN_DAYS: z.coerce.number().int().positive().default(7),
-  CLASSIFICATION_LLM_ENABLED: z.coerce.boolean().default(true),
+  CLASSIFICATION_LLM_ENABLED: envBoolean(true),
 });
 
 const parsed = envSchema.safeParse(process.env);
