@@ -1,3 +1,5 @@
+import { hasSlackMessageBody } from "../services/slackMessageContent.js";
+
 export type SlackFile = {
   id: string;
   name: string;
@@ -7,6 +9,41 @@ export type SlackFile = {
   size?: number;
   url_private?: string;
   permalink?: string;
+};
+
+export type SlackMessageAttachmentField = {
+  title?: string;
+  value?: string;
+  short?: boolean;
+};
+
+export type SlackMessageAttachment = {
+  fallback?: string;
+  text?: string;
+  pretext?: string;
+  title?: string;
+  fields?: SlackMessageAttachmentField[];
+};
+
+export type SlackMessageBlockText = {
+  type?: string;
+  text?: string;
+};
+
+export type SlackMessageBlockElement = {
+  type?: string;
+  text?: string;
+  url?: string;
+  value?: string;
+  elements?: SlackMessageBlockElement[];
+};
+
+export type SlackMessageBlock = {
+  type?: string;
+  text?: SlackMessageBlockText;
+  fields?: SlackMessageBlockText[];
+  elements?: SlackMessageBlockElement[];
+  accessory?: SlackMessageBlockElement | SlackMessageBlockText;
 };
 
 export type SlackUrlVerificationPayload = {
@@ -26,6 +63,8 @@ export type SlackMessageEvent = {
   app_id?: string;
   username?: string;
   files?: SlackFile[];
+  attachments?: SlackMessageAttachment[];
+  blocks?: SlackMessageBlock[];
 };
 
 export type SlackMessageChangedEvent = {
@@ -132,6 +171,8 @@ export type SlackHistoryMessage = {
   app_id?: string;
   username?: string;
   files?: SlackFile[];
+  attachments?: SlackMessageAttachment[];
+  blocks?: SlackMessageBlock[];
 };
 
 export type SlackApiResponseBase = {
@@ -217,11 +258,20 @@ function hasSupportedSlackMessageSubtype(subtype: unknown): boolean {
 
 function hasProcessableMessageBody(raw: {
   text?: unknown;
+  attachments?: unknown;
+  blocks?: unknown;
   files?: unknown;
 }): boolean {
-  const hasText = typeof raw.text === "string" && raw.text.trim().length > 0;
-  const hasFiles = Array.isArray(raw.files) && raw.files.length > 0;
-  return hasText || hasFiles;
+  return hasSlackMessageBody({
+    text: typeof raw.text === "string" ? raw.text : undefined,
+    attachments: Array.isArray(raw.attachments)
+      ? (raw.attachments as SlackMessageAttachment[])
+      : undefined,
+    blocks: Array.isArray(raw.blocks)
+      ? (raw.blocks as SlackMessageBlock[])
+      : undefined,
+    files: Array.isArray(raw.files) ? (raw.files as SlackFile[]) : undefined,
+  });
 }
 
 export function isIngestibleHistoryMessage(

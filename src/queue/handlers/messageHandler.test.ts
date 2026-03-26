@@ -56,6 +56,7 @@ vi.mock("../../db/queries.js", () => ({
   updateMessageAnalysisStatus: vi.fn(),
   getChannel: vi.fn().mockResolvedValue(makeChannel()),
   getChannelState: vi.fn(),
+  getChannelClassification: vi.fn().mockResolvedValue(null),
   getFollowUpRule: vi.fn().mockResolvedValue(null),
   resetLLMGatingState: vi.fn(),
   getThreadReplyCount: vi.fn().mockResolvedValue(0),
@@ -79,6 +80,23 @@ vi.mock("../../services/followUpMonitor.js", () => ({
 
 vi.mock("../../services/canonicalChannelState.js", () => ({
   persistCanonicalChannelState: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("../../services/intelligenceTruth.js", () => ({
+  recordMessageTruthState: vi.fn().mockImplementation(async (input: { suppressionReason?: string | null; executionStatus?: string }) => {
+    if (input.suppressionReason) return "skipped";
+    switch (input.executionStatus) {
+      case "completed":
+        return "completed";
+      case "failed":
+        return "failed";
+      case "processing":
+        return "processing";
+      default:
+        return "pending";
+    }
+  }),
+  recordMessageTruthSuppressed: vi.fn().mockResolvedValue("skipped"),
 }));
 
 vi.mock("../../services/eventBus.js", () => ({
@@ -142,6 +160,10 @@ function makeChannelState(
     workspace_id: "default",
     channel_id: "C123",
     running_summary: "",
+    live_summary: "",
+    live_summary_updated_at: null,
+    live_summary_source_ts_start: null,
+    live_summary_source_ts_end: null,
     participants_json: {},
     active_threads_json: [],
     key_decisions_json: [],

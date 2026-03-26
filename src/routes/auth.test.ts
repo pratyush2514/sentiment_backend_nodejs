@@ -22,7 +22,7 @@ vi.mock("../utils/logger.js", () => ({
 }));
 
 vi.mock("../middleware/apiAuth.js", () => ({
-  requireApiAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
+  requireServiceAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
     req.workspaceId = "T123";
     next();
   },
@@ -100,6 +100,7 @@ beforeEach(() => {
     botUserId: "U123",
     scopes: ["channels:history"],
     tokenRotationStatus: "ready",
+    installedBy: "U999",
     botTokenExpiresAt: new Date().toISOString(),
     lastTokenRefreshAt: new Date().toISOString(),
     lastTokenRefreshError: null,
@@ -146,5 +147,21 @@ describe("Auth Routes", () => {
         tokenRotationStatus: "ready",
       }),
     );
+  });
+
+  it("acknowledges logout without cancelling shared workspace jobs", async () => {
+    const res = await request(createApp()).post("/api/auth/logout").send({
+      workspaceId: "T123",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(
+      expect.objectContaining({
+        ok: true,
+        sessionCleared: true,
+        workspaceId: "T123",
+      }),
+    );
+    expect(boss.cancelWorkspaceJobs).not.toHaveBeenCalled();
   });
 });

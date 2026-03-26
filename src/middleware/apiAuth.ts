@@ -10,7 +10,11 @@ function timingSafeEqual(a: string, b: string): boolean {
   const bufA = Buffer.from(a);
   const bufB = Buffer.from(b);
   if (bufA.length !== bufB.length) {
-    crypto.timingSafeEqual(bufA, bufA);
+    // Pad shorter buffer to match length for constant-time comparison.
+    // Without this, an attacker can brute-force token length via timing.
+    const padded = Buffer.alloc(bufA.length, 0);
+    bufB.copy(padded, 0, 0, Math.min(bufB.length, bufA.length));
+    crypto.timingSafeEqual(bufA, padded);
     return false;
   }
   return crypto.timingSafeEqual(bufA, bufB);
@@ -23,20 +27,28 @@ interface SupabaseJwtPayload {
   name?: string;
 }
 
-function getWorkspaceIdFromRequest(req: Request): string | undefined {
+export function getWorkspaceIdFromRequest(req: Request): string | undefined {
   const queryWorkspaceId = req.query.workspace_id;
   if (typeof queryWorkspaceId === "string" && queryWorkspaceId.length > 0) {
     return queryWorkspaceId;
   }
 
-  if (
-    req.body &&
-    typeof req.body === "object" &&
-    "workspaceId" in req.body &&
-    typeof req.body.workspaceId === "string" &&
-    req.body.workspaceId.length > 0
-  ) {
-    return req.body.workspaceId;
+  if (req.body && typeof req.body === "object") {
+    if (
+      "workspace_id" in req.body &&
+      typeof req.body.workspace_id === "string" &&
+      req.body.workspace_id.length > 0
+    ) {
+      return req.body.workspace_id;
+    }
+
+    if (
+      "workspaceId" in req.body &&
+      typeof req.body.workspaceId === "string" &&
+      req.body.workspaceId.length > 0
+    ) {
+      return req.body.workspaceId;
+    }
   }
 
   return undefined;
@@ -83,6 +95,94 @@ async function verifySupabaseJwt(token: string): Promise<SupabaseJwtPayload | nu
   }
 }
 
+function getBearerToken(req: Request): string | null {
+  const authHeader = req.get("Authorization");
+  return authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+}
+
+function rejectMissingWorkspace(req: Request, res: Response): void {
+  res.status(400).json({
+    error: "missing_workspace_id",
+    message:
+      "workspace_id query parameter or workspaceId/workspace_id body field is required",
+    requestId: req.id,
+  });
+}
+
+function rejectMissingAuth(req: Request, res: Response): void {
+  res.status(401).json({
+    error: "missing_auth_token",
+    message: "Authorization header with Bearer token required",
+    requestId: req.id,
+  });
+}
+
+function rejectInvalidAuth(req: Request, res: Response): void {
+  res.status(403).json({
+    error: "invalid_auth_token",
+    message: "Invalid API authentication token",
+    requestId: req.id,
+  });
+}
+
+function applyServiceContext(
+  req: Request,
+  workspaceId: string,
+  authMode: "service" | "development",
+): void {
+  req.workspaceId = workspaceId;
+  req.userId = undefined;
+  req.authMode = authMode;
+}
+
+export async function requireServiceAuth(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const token = getBearerToken(req);
+
+  if (config.API_AUTH_TOKEN) {
+    if (!token) {
+      rejectMissingAuth(req, res);
+      return;
+    }
+    if (!timingSafeEqual(token, config.API_AUTH_TOKEN)) {
+      rejectInvalidAuth(req, res);
+      return;
+    }
+
+    const workspaceId = getWorkspaceIdFromRequest(req);
+    if (!workspaceId) {
+      rejectMissingWorkspace(req, res);
+      return;
+    }
+
+    applyServiceContext(req, workspaceId, "service");
+    next();
+    return;
+  }
+
+  if (config.NODE_ENV === "production") {
+    log.error("No service authentication method configured in production");
+    res.status(500).json({
+      error: "server_misconfigured",
+      message: "API authentication not configured",
+      requestId: req.id,
+    });
+    return;
+  }
+
+  const workspaceId = getWorkspaceIdFromRequest(req);
+  if (!workspaceId) {
+    rejectMissingWorkspace(req, res);
+    return;
+  }
+
+  applyServiceContext(req, workspaceId, "development");
+  next();
+}
+
 /**
  * Dual-mode API auth middleware.
  * 1. If SUPABASE_JWT_SECRET is configured, try Supabase JWT verification first.
@@ -90,8 +190,7 @@ async function verifySupabaseJwt(token: string): Promise<SupabaseJwtPayload | nu
  * 3. In dev with no token configured, allow all requests.
  */
 export async function requireApiAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const authHeader = req.get("Authorization");
-  const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+  const token = getBearerToken(req);
 
   // Path 1: Supabase JWT verification
   if (token && config.SUPABASE_JWT_SECRET) {
@@ -99,43 +198,11 @@ export async function requireApiAuth(req: Request, res: Response, next: NextFunc
     if (jwtResult) {
       req.workspaceId = jwtResult.workspaceId;
       req.userId = jwtResult.userId;
+      req.authMode = "user";
       next();
       return;
     }
   }
 
-  // Path 2: Static Bearer token
-  if (config.API_AUTH_TOKEN) {
-    if (!token) {
-      res.status(401).json({ error: "missing_auth_token", message: "Authorization header with Bearer token required", requestId: req.id });
-      return;
-    }
-    if (!timingSafeEqual(token, config.API_AUTH_TOKEN)) {
-      res.status(403).json({ error: "invalid_auth_token", message: "Invalid API authentication token", requestId: req.id });
-      return;
-    }
-    const workspaceId = getWorkspaceIdFromRequest(req);
-    if (!workspaceId) {
-      res.status(400).json({ error: "missing_workspace_id", message: "workspace_id query parameter or workspaceId body field is required", requestId: req.id });
-      return;
-    }
-    req.workspaceId = workspaceId;
-    next();
-    return;
-  }
-
-  // Path 3: No auth configured — dev only
-  if (config.NODE_ENV === "production") {
-    log.error("No authentication method configured in production");
-    res.status(500).json({ error: "server_misconfigured", message: "API authentication not configured", requestId: req.id });
-    return;
-  }
-
-  const workspaceId = getWorkspaceIdFromRequest(req);
-  if (!workspaceId) {
-    res.status(400).json({ error: "missing_workspace_id", message: "workspace_id query parameter or workspaceId body field is required", requestId: req.id });
-    return;
-  }
-  req.workspaceId = workspaceId;
-  next();
+  await requireServiceAuth(req, res, next);
 }

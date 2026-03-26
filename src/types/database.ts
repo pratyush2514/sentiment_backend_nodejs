@@ -29,6 +29,106 @@ export type AnalysisStatus =
   | "failed"
   | "skipped";
 
+export type MessageIntelligenceEligibilityStatus =
+  | "eligible"
+  | "not_candidate"
+  | "policy_suppressed"
+  | "privacy_suppressed";
+
+export type MessageIntelligenceExecutionStatus =
+  | "not_run"
+  | "pending"
+  | "processing"
+  | "completed"
+  | "failed";
+
+export type MessageIntelligenceQualityStatus =
+  | "none"
+  | "fallback"
+  | "partial"
+  | "verified";
+
+export type MessageIntelligenceSuppressionReason =
+  | "channel_not_ready"
+  | "cooldown"
+  | "importance_tier"
+  | "privacy_skip"
+  | "budget_exceeded"
+  | "not_candidate";
+
+export type SummaryArtifactKind =
+  | "channel_rollup"
+  | "thread_rollup"
+  | "backfill_rollup";
+
+export type SummaryArtifactGenerationMode = "llm" | "fallback" | "reused_existing";
+
+export type SummaryArtifactCompletenessStatus =
+  | "complete"
+  | "partial"
+  | "stale"
+  | "no_recent_messages";
+
+export type BackfillRunStatus =
+  | "running"
+  | "completed"
+  | "completed_with_degradations"
+  | "failed";
+
+export type BackfillRunPhase =
+  | "history_import"
+  | "thread_expansion"
+  | "user_enrichment"
+  | "member_sync"
+  | "initial_intelligence"
+  | "finalize";
+
+export type BackfillMemberSyncResult =
+  | "not_started"
+  | "running"
+  | "succeeded"
+  | "degraded"
+  | "failed";
+
+export type IngestReadiness = "not_started" | "hydrating" | "ready";
+export type IntelligenceReadiness = "missing" | "bootstrap" | "partial" | "ready" | "stale";
+
+export type IntelligenceDegradationScopeType =
+  | "channel"
+  | "message"
+  | "thread"
+  | "summary_artifact"
+  | "backfill_run"
+  | "meeting";
+
+export type IntelligenceDegradationType =
+  | "embedding_failure"
+  | "thread_fetch_skipped"
+  | "metadata_resolution_failure"
+  | "thread_insight_enqueue_failure"
+  | "budget_truncation"
+  | "budget_truncated"
+  | "provider_validation_retry_exhaustion"
+  | "unresolved_target_users"
+  | "partial_thread_fetch"
+  | "incomplete_persisted_analysis"
+  | "budget_exceeded"
+  | "embedding_failed"
+  | "thread_fetch_failed"
+  | "member_sync_failed"
+  | "analysis_failed"
+  | "analysis_threw_unexpected_error"
+  | "incomplete_persisted_analysis_recovered"
+  | "low_signal_channel"
+  | "meta_summary_fallback"
+  | "fathom_fetch_failed"
+  | "fathom_extraction_failed"
+  | "fathom_digest_failed"
+  | "fathom_channel_link_missing"
+  | "meeting_participant_resolution_failed";
+
+export type IntelligenceDegradationSeverity = "info" | "warning" | "error";
+
 export interface ChannelRow {
   id: string;
   workspace_id: string;
@@ -65,6 +165,112 @@ export interface MessageRow {
   analysis_status: AnalysisStatus;
   files_json: Array<{ name: string; title?: string; mimetype?: string; filetype?: string; size?: number; permalink?: string }> | null;
   links_json: Array<{ url: string; domain: string; label?: string; linkType: string }> | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface MessageIntelligenceStateRow {
+  id: string;
+  workspace_id: string;
+  channel_id: string;
+  message_ts: string;
+  eligibility_status: MessageIntelligenceEligibilityStatus;
+  execution_status: MessageIntelligenceExecutionStatus;
+  quality_status: MessageIntelligenceQualityStatus;
+  suppression_reason: MessageIntelligenceSuppressionReason | null;
+  provider_name: string | null;
+  provider_model: string | null;
+  attempt_count: number;
+  last_attempt_at: Date | null;
+  completed_at: Date | null;
+  recovered_at: Date | null;
+  last_error: string | null;
+  last_error_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export type SummaryFactKind =
+  | "topic"
+  | "blocker"
+  | "resolution"
+  | "decision"
+  | "primary_issue"
+  | "open_question";
+
+export interface SummaryFactEvidence {
+  messageTs: string;
+  threadTs: string | null;
+  excerpt: string | null;
+}
+
+export interface SummaryFact {
+  kind: SummaryFactKind;
+  text: string;
+  evidence: SummaryFactEvidence[];
+}
+
+export interface SummaryArtifactRow {
+  id: string;
+  workspace_id: string;
+  channel_id: string;
+  summary_kind: SummaryArtifactKind;
+  generation_mode: SummaryArtifactGenerationMode;
+  completeness_status: SummaryArtifactCompletenessStatus;
+  summary: string;
+  key_decisions_json: string[];
+  summary_facts_json: SummaryFact[];
+  degraded_reasons_json: string[];
+  coverage_start_ts: string | null;
+  coverage_end_ts: string | null;
+  candidate_message_count: number;
+  included_message_count: number;
+  artifact_version: number;
+  source_run_id: string | null;
+  superseded_at: Date | null;
+  superseded_by_artifact_id: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface BackfillRunRow {
+  id: string;
+  workspace_id: string;
+  channel_id: string;
+  status: BackfillRunStatus;
+  current_phase: BackfillRunPhase;
+  pages_fetched: number;
+  messages_imported: number;
+  thread_roots_discovered: number;
+  threads_attempted: number;
+  threads_failed: number;
+  users_resolved: number;
+  member_sync_result: BackfillMemberSyncResult;
+  summary_artifact_id: string | null;
+  degraded_reason_count: number;
+  last_error: string | null;
+  started_at: Date;
+  completed_at: Date | null;
+  updated_at: Date;
+}
+
+export interface IntelligenceDegradationEventRow {
+  id: string;
+  workspace_id: string;
+  channel_id: string;
+  scope_type: IntelligenceDegradationScopeType;
+  scope_key: string | null;
+  message_ts: string | null;
+  thread_ts: string | null;
+  summary_artifact_id: string | null;
+  backfill_run_id: string | null;
+  degradation_type: IntelligenceDegradationType;
+  severity: IntelligenceDegradationSeverity;
+  details_json: Record<string, unknown>;
+  dedupe_key: string | null;
+  is_active: boolean;
+  superseded_by_event_id: string | null;
+  resolved_at: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -114,7 +320,7 @@ export interface FollowUpRuleRow {
 
 export type FollowUpStatus = "open" | "resolved" | "dismissed";
 export type FollowUpSeriousness = "low" | "medium" | "high";
-export type FollowUpDetectionMode = "heuristic" | "rule" | "hybrid" | "llm";
+export type FollowUpDetectionMode = "heuristic" | "rule" | "hybrid" | "llm" | "meeting";
 export type FollowUpWorkflowState =
   | "pending_reply_window"
   | "awaiting_primary"
@@ -443,6 +649,7 @@ export interface ContextDocumentRow {
   source_ts_end: string | null;
   source_thread_ts: string | null;
   message_count: number;
+  summary_artifact_id: string | null;
   created_at: Date;
 }
 
@@ -460,6 +667,13 @@ export interface ChannelOverviewRow {
   last_event_at: Date | null;
   updated_at: Date;
   running_summary: string | null;
+  ingest_readiness?: IngestReadiness | null;
+  intelligence_readiness?: IntelligenceReadiness | null;
+  current_summary_artifact_id?: string | null;
+  active_backfill_run_id?: string | null;
+  active_degradation_count?: number | null;
+  latest_summary_completeness?: SummaryArtifactCompletenessStatus | null;
+  has_active_degradations?: boolean | null;
   sentiment_snapshot_json: Record<string, unknown> | null;
   signal: "stable" | "elevated" | "escalating" | null;
   health: "healthy" | "attention" | "at-risk" | null;
@@ -469,9 +683,23 @@ export interface ChannelOverviewRow {
   message_disposition_counts_json: MessageDispositionCounts | null;
   effective_channel_mode: ChannelMode | null;
   message_count: string;
+  active_message_count: string;
+  total_imported_message_count: string;
 }
 
 export interface EnrichedMessageWithAnalyticsRow extends EnrichedMessageRow {
+  intelligence_state_id: string | null;
+  analysis_eligibility: MessageIntelligenceEligibilityStatus | null;
+  analysis_execution: MessageIntelligenceExecutionStatus | null;
+  analysis_quality: MessageIntelligenceQualityStatus | null;
+  suppression_reason: MessageIntelligenceSuppressionReason | null;
+  analysis_provider_name: string | null;
+  analysis_provider_model: string | null;
+  analysis_attempt_count: number | null;
+  analysis_last_attempt_at: Date | null;
+  analysis_completed_at: Date | null;
+  analysis_recovered_at: Date | null;
+  analysis_last_error: string | null;
   ma_dominant_emotion: DominantEmotion | null;
   ma_interaction_tone: InteractionTone | null;
   ma_confidence: number | null;
@@ -545,6 +773,10 @@ export interface ChannelStateRow {
   workspace_id: string;
   channel_id: string;
   running_summary: string;
+  live_summary: string;
+  live_summary_updated_at: Date | null;
+  live_summary_source_ts_start: string | null;
+  live_summary_source_ts_end: string | null;
   participants_json: Record<string, number>;
   active_threads_json: Array<{
     threadTs: string;
@@ -571,6 +803,11 @@ export interface ChannelStateRow {
   last_reconcile_at: Date | null;
   messages_since_last_rollup: number;
   last_rollup_at: Date | null;
+  ingest_readiness?: IngestReadiness | null;
+  intelligence_readiness?: IntelligenceReadiness | null;
+  current_summary_artifact_id?: string | null;
+  active_backfill_run_id?: string | null;
+  active_degradation_count?: number | null;
   updated_at: Date;
 }
 
@@ -606,4 +843,191 @@ export interface ChannelHealthCountsRow {
   fear_count: string;
   surprise_count: string;
   disgust_count: string;
+}
+
+// ─── Fathom Meeting Intelligence ─────────────────────────────────────────────
+
+export type MeetingProcessingStatus =
+  | "pending"
+  | "fetching"
+  | "extracting"
+  | "digesting"
+  | "duplicate"
+  | "completed"
+  | "failed";
+
+export type MeetingExtractionStatus =
+  | "not_run"
+  | "pending"
+  | "completed"
+  | "failed";
+
+export type MeetingObligationType =
+  | "action_item"
+  | "decision"
+  | "commitment"
+  | "question"
+  | "risk"
+  | "next_step";
+
+export type MeetingObligationStatus =
+  | "open"
+  | "in_progress"
+  | "completed"
+  | "dismissed"
+  | "expired";
+
+export type MeetingObligationPriority = "low" | "medium" | "high" | "critical";
+
+export type MeetingObligationDueDateSource = "explicit" | "inferred" | "default";
+
+export type FathomConnectionStatus = "active" | "revoked" | "invalid";
+export type FathomHistoricalSyncStatus =
+  | "idle"
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed";
+export type MeetingImportMode = "live" | "historical";
+export type MeetingSource = "api" | "webhook" | "shared_link";
+
+export type MeetingChannelLinkType = "manual" | "pattern";
+
+export interface FathomConnectionRow {
+  id: string;
+  workspace_id: string;
+  fathom_user_email: string | null;
+  encrypted_api_key: string;
+  webhook_id: string | null;
+  webhook_secret: string | null;
+  status: FathomConnectionStatus;
+  default_channel_id: string | null;
+  last_synced_at: Date | null;
+  last_error: string | null;
+  historical_sync_status: FathomHistoricalSyncStatus;
+  historical_sync_window_days: number;
+  historical_sync_started_at: Date | null;
+  historical_sync_completed_at: Date | null;
+  historical_sync_discovered_count: number;
+  historical_sync_imported_count: number;
+  historical_sync_last_error: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface FathomParticipant {
+  name: string;
+  email: string | null;
+  domain: string | null;
+}
+
+export interface FathomActionItem {
+  text: string;
+  assignee: string | null;
+}
+
+export interface MeetingRow {
+  id: string;
+  workspace_id: string;
+  fathom_call_id: string;
+  meeting_source: MeetingSource;
+  channel_id: string | null;
+  title: string;
+  started_at: Date;
+  ended_at: Date | null;
+  duration_seconds: number | null;
+  participants_json: FathomParticipant[];
+  fathom_summary: string | null;
+  fathom_action_items_json: FathomActionItem[];
+  fathom_highlights_json: unknown[];
+  recording_url: string | null;
+  share_url: string | null;
+  transcript_text: string | null;
+  meeting_sentiment: string | null;
+  risk_signals_json: Record<string, unknown>[];
+  processing_status: MeetingProcessingStatus;
+  extraction_status: MeetingExtractionStatus;
+  digest_posted_at: Date | null;
+  digest_claimed_at: Date | null;
+  digest_message_ts: string | null;
+  digest_thread_ts: string | null;
+  digest_enabled: boolean;
+  tracking_enabled: boolean;
+  duplicate_of_meeting_id: string | null;
+  import_mode: MeetingImportMode;
+  last_error: string | null;
+  attempt_count: number;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface MeetingObligationRow {
+  id: string;
+  workspace_id: string;
+  meeting_id: string;
+  channel_id: string | null;
+  dedupe_key: string;
+  obligation_type: MeetingObligationType;
+  title: string;
+  description: string | null;
+  owner_user_id: string | null;
+  owner_name: string | null;
+  assignee_user_ids: string[];
+  due_date: string | null;
+  due_date_source: MeetingObligationDueDateSource | null;
+  priority: MeetingObligationPriority;
+  status: MeetingObligationStatus;
+  follow_up_item_id: string | null;
+  slack_evidence_json: unknown[];
+  extraction_confidence: number;
+  source_context: string | null;
+  resolved_at: Date | null;
+  resolution_evidence: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface MeetingChannelLinkRow {
+  id: string;
+  workspace_id: string;
+  channel_id: string;
+  link_type: MeetingChannelLinkType;
+  domain_pattern: string | null;
+  title_pattern: string | null;
+  recorder_email_pattern: string | null;
+  priority: number;
+  enabled: boolean;
+  digest_enabled: boolean;
+  tracking_enabled: boolean;
+  created_at: Date;
+  updated_at: Date;
+}
+
+// ─── Channel Classification ──────────────────────────────────────────────────
+
+export type ChannelClassificationType =
+  | "client_delivery"
+  | "client_support"
+  | "internal_engineering"
+  | "internal_operations"
+  | "internal_social"
+  | "automated"
+  | "unclassified";
+
+export type ClassificationSource = "heuristic" | "llm" | "human_override";
+
+export interface ChannelClassificationRow {
+  id: string;
+  workspace_id: string;
+  channel_id: string;
+  channel_type: ChannelClassificationType;
+  confidence: number;
+  classification_source: ClassificationSource;
+  client_name: string | null;
+  topics_json: string[];
+  reasoning: string | null;
+  classified_at: Date;
+  overridden_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
 }

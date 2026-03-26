@@ -23,16 +23,11 @@ export interface AssembledContext {
   totalTokens: number;
 }
 
-function pickLatestSummaryBaseDoc(
+function pickCanonicalSummaryBaseDoc(
   channelRollupDoc: Awaited<ReturnType<typeof db.getLatestContextDocument>>,
   backfillRollupDoc: Awaited<ReturnType<typeof db.getLatestContextDocument>>,
 ) {
-  if (!channelRollupDoc) return backfillRollupDoc;
-  if (!backfillRollupDoc) return channelRollupDoc;
-
-  return channelRollupDoc.created_at >= backfillRollupDoc.created_at
-    ? channelRollupDoc
-    : backfillRollupDoc;
+  return backfillRollupDoc ?? channelRollupDoc;
 }
 
 function hasFreshSummaryCoverage(
@@ -97,7 +92,7 @@ export async function assembleContext(
     db.getLatestContextDocument(workspaceId, channelId, "backfill_rollup"),
     db.getMessagesInWindow(workspaceId, channelId, analysisWindowDays, null, 1),
   ]);
-  const baseSummaryDoc = pickLatestSummaryBaseDoc(lastChannelDoc, lastBackfillDoc);
+  const baseSummaryDoc = pickCanonicalSummaryBaseDoc(lastChannelDoc, lastBackfillDoc);
   const earliestWindowMessageTs = earliestWindowMessages[0]?.ts ?? null;
   const useFreshSummary = hasFreshSummaryCoverage(
     baseSummaryDoc,

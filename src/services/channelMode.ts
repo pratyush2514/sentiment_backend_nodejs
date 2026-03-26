@@ -1,4 +1,5 @@
 import type {
+  ChannelClassificationType,
   ChannelMode,
   ChannelModeOverride,
   ConversationType,
@@ -10,6 +11,12 @@ export interface ChannelModeInput {
   botMessageRatio?: number | null;
   automationSignalRatio?: number | null;
   channelModeOverride?: ChannelModeOverride | null;
+  /** AI-classified channel type (from channel_classifications table) */
+  channelType?: ChannelClassificationType | null;
+  /** Classification confidence (0-1). Only trust for mode decisions when > 0.6 */
+  classificationConfidence?: number | null;
+  /** Classification source. Human overrides bypass confidence gate. */
+  classificationSource?: string | null;
 }
 
 export interface ChannelModeResolution {
@@ -62,6 +69,24 @@ export function deriveRecommendedChannelMode(
     input.conversationType === "group_dm"
   ) {
     return "collaboration";
+  }
+
+  // AI classification short-circuit — only trusted above confidence threshold or human override
+  const isHumanOverride = input.classificationSource === "human_override";
+  const trustClassification = isHumanOverride || (input.classificationConfidence ?? 0) >= 0.6;
+
+  if (trustClassification) {
+    if (input.channelType === "automated") {
+      return "automation";
+    }
+    if (
+      input.channelType === "client_delivery" ||
+      input.channelType === "client_support" ||
+      input.channelType === "internal_engineering" ||
+      input.channelType === "internal_operations"
+    ) {
+      return "collaboration";
+    }
   }
 
   const normalizedName = normalizeChannelName(input.channelName);

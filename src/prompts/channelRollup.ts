@@ -66,7 +66,7 @@ export function buildChannelRollupPrompt(context: ChannelRollupContext): {
       const time = Number.isFinite(parsed)
         ? new Date(parsed * 1000).toISOString().slice(11, 16)
         : m.ts;
-      return `[${time}] [${m.displayName ?? m.userId}] ${resolveMentionsInText(m.text, userMap)}`;
+      return `[${time}] [ts=${m.ts}] [${m.displayName ?? m.userId}] ${resolveMentionsInText(m.text, userMap)}`;
     })
     .join("\n");
 
@@ -115,31 +115,36 @@ ${decisionsBlock}
 ${canonicalStateBlock}
 
 ## Task
-1. Write an updated running summary that helps a manager understand the channel RIGHT NOW.
-   - Treat the canonical channel state above as the source of truth for current status, risk, and attention.
-   - Explain that state using the new messages; do not contradict it.
-   - This summary should reflect the CURRENT state — what's happening this week.
-   - Actively DROP topics from the existing summary that are no longer active, resolved, or stale.
-   - Focus on current topics, blockers, risks, accountability, decisions, and next steps.
-   - If the canonical state is stable/clear, do not invent blockers or escalation.
-   - If the channel mode is automation or mixed, describe failures/incidents as operational issues rather than interpersonal sentiment.
-   - Treat related incidents from other channels as context, not as local incidents, unless they are explicitly described as blocking work in this channel.
-   - Mention names only when they clarify ownership or tension.
-   - Keep it concrete and evidence-based; no generic filler.
-   - Never mention that the prior summary was missing, this is a rollup, or that messages were backfilled.
-   - Use single quotes around key phrases that deserve attention (e.g., the team described the outage as 'critical priority').
-2. Extract only truly NEW key decisions, commitments, or action items.
-   - Do not repeat existing decisions.
-   - Remove decisions that appear resolved or superseded by new information.
-   - If there are no new decisions, return an empty array.
-   - Each decision should be a single, specific sentence with an owner if mentioned.
-3. Keep the summary between 80-220 words. Shorter is better when the content is straightforward.
+1. Extract only facts that are directly supported by the provided messages.
+   - Every extracted item MUST include 1 to 3 exact \`evidence_ts\` values copied from the messages above.
+   - Pick the most representative 1-3 timestamps. Do NOT include more than 3.
+   - If you cannot support an item with an exact \`ts\`, omit it.
+   - Do not invent blockers, resolutions, or decisions from the existing summary alone.
+2. Focus on what matters to a manager RIGHT NOW:
+   - active topics and what is actively being discussed
+   - blockers, operational risks, and what is holding up work
+   - recent resolutions, progress, or completed work
+   - truly new decisions, commitments, or action items with their context
+3. Treat the canonical channel state as contextual guidance, not as permission to invent unsupported claims.
+4. Keep each extracted fact highly detailed. Write full, descriptive sentences that explain the context, who is involved, and what the specific details are. Do not use short fragments.
+5. Do not output a narrative paragraph. The backend will generate the visible summary from your structured facts.
 
 ## Output (JSON only)
 {
-  "summary": "updated running summary...",
-  "new_decisions": ["decision1", "decision2"]
-}`;
+  "active_topics": [
+    { "text": "Detailed, full sentence explaining the topic, who is involved, and specific details discussed.", "evidence_ts": ["1234567890.123456"] }
+  ],
+  "blockers": [
+    { "text": "Detailed, full sentence explaining the specific blocker, risk, and its impact.", "evidence_ts": ["1234567890.123456"] }
+  ],
+  "resolutions": [
+    { "text": "Detailed, full sentence explaining the specific progress, resolution, or completed work.", "evidence_ts": ["1234567890.123456"] }
+  ],
+  "new_decisions": [
+    { "text": "Detailed, full sentence explaining the specific decision, next step, or commitment.", "evidence_ts": ["1234567890.123456"] }
+  ]
+}
+IMPORTANT: Each evidence_ts array must have 1-3 items only. Never more than 3.`;
 
   const user = `## New Messages\n${messagesBlock}`;
 

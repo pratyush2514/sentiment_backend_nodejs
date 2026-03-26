@@ -23,6 +23,7 @@ vi.mock("../../utils/logger.js", () => ({
 vi.mock("../../db/queries.js", () => ({
   getDailyLLMCost: vi.fn().mockResolvedValue(0),
   getFollowUpRule: vi.fn().mockResolvedValue(null),
+  getChannelClassification: vi.fn().mockResolvedValue(null),
   getMessages: vi.fn().mockResolvedValue([]),
   getMessagesByTs: vi.fn().mockResolvedValue([]),
   getMessagesEnrichedByTs: vi.fn().mockResolvedValue([]),
@@ -64,9 +65,22 @@ vi.mock("../../services/canonicalChannelState.js", () => ({
   persistCanonicalChannelState: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("../../services/intelligenceTruth.js", () => ({
+  recordIntelligenceDegradation: vi.fn().mockResolvedValue(undefined),
+  recordMessageTruthSuppressed: vi.fn().mockResolvedValue("skipped"),
+  recordMessageTruthRecovery: vi.fn().mockResolvedValue("processing"),
+  recordMessageTruthProcessing: vi.fn().mockResolvedValue("processing"),
+  recordMessageTruthCompleted: vi.fn().mockResolvedValue("completed"),
+  recordMessageTruthFailed: vi.fn().mockResolvedValue("failed"),
+}));
+
 const db = await import("../../db/queries.js");
 const { analyzeMessage } = await import("../../services/emotionAnalyzer.js");
 const { alertBudgetExceeded } = await import("../../services/alerting.js");
+const {
+  recordIntelligenceDegradation,
+  recordMessageTruthSuppressed,
+} = await import("../../services/intelligenceTruth.js");
 const { handleLLMAnalyze } = await import("./analyzeHandler.js");
 
 function makeChannelState(
@@ -77,6 +91,10 @@ function makeChannelState(
     workspace_id: "default",
     channel_id: "C123",
     running_summary: "",
+    live_summary: "",
+    live_summary_updated_at: null,
+    live_summary_source_ts_start: null,
+    live_summary_source_ts_end: null,
     participants_json: {},
     active_threads_json: [],
     key_decisions_json: [],
@@ -160,10 +178,40 @@ beforeEach(() => {
 
 describe("handleLLMAnalyze", () => {
   it("skips when budget exceeded", async () => {
+    const ts = recentTs(10);
     vi.mocked(db.getDailyLLMCost).mockResolvedValue(15.0);
+    vi.mocked(db.getMessages).mockResolvedValue([
+      makeMessage(ts),
+    ] as never);
+    vi.mocked(db.getMessagesEnrichedByTs).mockResolvedValue([
+      makeMessage(ts),
+    ] as never);
+
     await handleLLMAnalyze([makeJob()] as never);
 
     expect(alertBudgetExceeded).toHaveBeenCalled();
+    expect(recordIntelligenceDegradation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "default",
+        channelId: "C123",
+        eventType: "budget_exceeded",
+      }),
+    );
+    expect(recordMessageTruthSuppressed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "default",
+        channelId: "C123",
+        messageTs: ts,
+        eligibilityStatus: "policy_suppressed",
+        suppressionReason: "budget_exceeded",
+      }),
+    );
+    expect(db.updateMessageAnalysisStatus).toHaveBeenCalledWith(
+      "default",
+      "C123",
+      ts,
+      "skipped",
+    );
     expect(db.insertMessageAnalytics).not.toHaveBeenCalled();
   });
 

@@ -2,6 +2,7 @@ import { config } from "../config.js";
 import * as db from "../db/queries.js";
 import {
   enqueueBackfill,
+  enqueueBackfillTier1,
   enqueueSummaryRollup,
   getQueue,
   getQueueRuntimeState,
@@ -13,6 +14,7 @@ import {
   tierAllowsRoutineChannelSummary,
   tierAllowsRoutineThreadInsight,
 } from "./conversationImportance.js";
+import { recoverHistoricalSyncLease } from "./fathomHistoricalSyncRecovery.js";
 import type { JobWithMetadata, PgBoss } from "pg-boss";
 
 const log = logger.child({ service: "queueMaintenance" });
@@ -100,6 +102,37 @@ async function recoverStaleChannels(): Promise<number> {
   return recoveredCount;
 }
 
+async function recoverStuckTieredChannels(): Promise<number> {
+  const channels = await db.getRecoverableTieredChannels(
+    config.QUEUE_STALE_CHANNEL_MINUTES,
+  );
+  let recoveredCount = 0;
+
+  for (const channel of channels) {
+    // Re-enqueue from Tier 1 so the full chain restarts cleanly
+    const jobId = await enqueueBackfillTier1(
+      channel.workspace_id,
+      channel.channel_id,
+      "tiered-backfill-recovery",
+    );
+
+    if (jobId) {
+      recoveredCount += 1;
+      log.warn(
+        {
+          channelId: channel.channel_id,
+          stuckTier: channel.backfill_tier,
+          intelligenceReadiness: channel.intelligence_readiness,
+          jobId,
+        },
+        "Re-enqueued stuck tiered channel for backfill recovery",
+      );
+    }
+  }
+
+  return recoveredCount;
+}
+
 async function normalizeHistoricalBackfillMessages(): Promise<number> {
   const normalized = await db.markStaleBackfillMessagesSkipped(
     config.QUEUE_STALE_ANALYSIS_MINUTES,
@@ -125,6 +158,33 @@ async function normalizeHistoricalBackfillMessages(): Promise<number> {
 
   return normalizedCount;
 }
+
+async function recoverStaleHistoricalSyncs(): Promise<number> {
+  const candidates = await db.getStaleFathomHistoricalSyncs(
+    config.FATHOM_HISTORICAL_SYNC_STALE_MINUTES,
+    config.QUEUE_STALE_SCAN_LIMIT,
+  );
+  let recoveredCount = 0;
+
+  for (const connection of candidates) {
+    const recovered = await recoverHistoricalSyncLease({
+      workspaceId: connection.workspace_id,
+      connection,
+      requestedBy: "maintenance",
+      reason: "queue_maintenance",
+    });
+
+    if (recovered.recovered) {
+      recoveredCount += 1;
+    }
+  }
+
+  return recoveredCount;
+}
+
+// Debounce: don't re-enqueue the same artifact scope within 5 minutes
+const recentlyRecoveredArtifacts = new Map<string, number>();
+const ARTIFACT_RECOVERY_COOLDOWN_MS = 5 * 60 * 1000;
 
 async function recoverStaleArtifacts(): Promise<number> {
   const candidates = await db.getStaleAnalysisCandidates(
@@ -198,6 +258,13 @@ async function recoverStaleArtifacts(): Promise<number> {
       continue;
     }
 
+    // Debounce: skip if this scope was recently recovered
+    const artifactScopeKey = `${scope.workspaceId}:${scope.channelId}:${scope.threadTs ?? "channel"}`;
+    const lastRecovered = recentlyRecoveredArtifacts.get(artifactScopeKey);
+    if (lastRecovered && Date.now() - lastRecovered < ARTIFACT_RECOVERY_COOLDOWN_MS) {
+      continue;
+    }
+
     const jobId = await enqueueSummaryRollup({
       workspaceId: scope.workspaceId,
       channelId: scope.channelId,
@@ -208,6 +275,14 @@ async function recoverStaleArtifacts(): Promise<number> {
 
     if (jobId) {
       recoveredCount += 1;
+      recentlyRecoveredArtifacts.set(artifactScopeKey, Date.now());
+      // Prune old entries to prevent unbounded growth
+      if (recentlyRecoveredArtifacts.size > 500) {
+        const cutoff = Date.now() - ARTIFACT_RECOVERY_COOLDOWN_MS;
+        for (const [key, ts] of recentlyRecoveredArtifacts) {
+          if (ts < cutoff) recentlyRecoveredArtifacts.delete(key);
+        }
+      }
       log.warn(
         {
           channelId: scope.channelId,
@@ -238,20 +313,29 @@ export async function runQueueMaintenanceOnce(): Promise<void> {
     await boss.supervise();
 
     const retriedFailedJobs = await retryRecentFailedJobs(boss);
+    const releasedDigestClaims = await db.releaseStaleMeetingDigestClaims();
     const recoveredChannels = await recoverStaleChannels();
+    const recoveredTieredChannels = await recoverStuckTieredChannels();
+    const recoveredHistoricalSyncs = await recoverStaleHistoricalSyncs();
     const normalizedHistoricalMessages = await normalizeHistoricalBackfillMessages();
     const recoveredArtifacts = await recoverStaleArtifacts();
 
     if (
       retriedFailedJobs > 0 ||
+      releasedDigestClaims.length > 0 ||
       recoveredChannels > 0 ||
+      recoveredTieredChannels > 0 ||
+      recoveredHistoricalSyncs > 0 ||
       normalizedHistoricalMessages > 0 ||
       recoveredArtifacts > 0
     ) {
       log.info(
         {
           retriedFailedJobs,
+          releasedDigestClaims: releasedDigestClaims.length,
           recoveredChannels,
+          recoveredTieredChannels,
+          recoveredHistoricalSyncs,
           normalizedHistoricalMessages,
           recoveredArtifacts,
         },

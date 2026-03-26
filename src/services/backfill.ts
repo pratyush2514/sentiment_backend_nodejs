@@ -1,6 +1,10 @@
 import { config } from "../config.js";
 import * as db from "../db/queries.js";
-import { enqueueSummaryRollup } from "../queue/boss.js";
+import {
+  enqueueBackfillTier2,
+  enqueueBackfillTier3,
+  enqueueSummaryRollup,
+} from "../queue/boss.js";
 import { isIngestibleHistoryMessage } from "../types/slack.js";
 import { logger } from "../utils/logger.js";
 import { materializeBackfillSummary } from "./backfillSummary.js";
@@ -14,7 +18,21 @@ import {
   tierAllowsRoutineChannelSummary,
   tierAllowsThreadBootstrap,
 } from "./conversationImportance.js";
+import {
+  insertContextDocumentWithArtifact,
+  completeBackfillRun,
+  failBackfillRun,
+  recordIntelligenceDegradation,
+  recordMessageTruthSuppressed,
+  recordSummaryArtifact,
+  startBackfillRun,
+  updateBackfillRun,
+} from "./intelligenceTruth.js";
 import { getSlackClient } from "./slackClientFactory.js";
+import {
+  extractSlackMessageText,
+  mapSlackFiles,
+} from "./slackMessageContent.js";
 import { buildFallbackChannelSummary } from "./summaryState.js";
 import { extractLinks } from "./textNormalizer.js";
 import { batchResolveUsers } from "./userProfiles.js";
@@ -46,7 +64,7 @@ async function syncChannelMetadata(
 export async function syncChannelMemberList(
   workspaceId: string,
   channelId: string,
-): Promise<void> {
+): Promise<{ memberCount: number; degraded: boolean }> {
   try {
     const slack = await getSlackClient(workspaceId);
     const allMembers: string[] = [];
@@ -59,7 +77,7 @@ export async function syncChannelMemberList(
 
     if (allMembers.length === 0) {
       log.info({ channelId }, "No members returned from conversations.members");
-      return;
+      return { memberCount: 0, degraded: false };
     }
 
     await db.syncChannelMembers(workspaceId, channelId, allMembers);
@@ -72,9 +90,25 @@ export async function syncChannelMemberList(
       await batchResolveUsers(workspaceId, newIds, 5);
     }
 
-    log.info({ channelId, memberCount: allMembers.length, newProfiles: newIds.length }, "Channel member list synced");
+    log.info(
+      { channelId, memberCount: allMembers.length, newProfiles: newIds.length },
+      "Channel member list synced",
+    );
+    return { memberCount: allMembers.length, degraded: false };
   } catch (err) {
+    const errMsg = err instanceof Error ? err.message : "unknown";
     log.warn({ channelId, err }, "Unable to sync channel member list");
+    await recordIntelligenceDegradation({
+      workspaceId,
+      channelId,
+      scope: "backfill",
+      eventType: "member_sync_failed",
+      severity: "medium",
+      details: {
+        error: errMsg,
+      },
+    });
+    return { memberCount: 0, degraded: true };
   }
 }
 
@@ -82,19 +116,17 @@ async function seedInitialArtifacts(
   workspaceId: string,
   channelId: string,
 ): Promise<{ seededThreadCount: number; importanceTier: string }> {
-  const lookbackHours = (await db.getEffectiveAnalysisWindowDays(workspaceId, channelId)) * 24;
+  const lookbackHours =
+    (await db.getEffectiveAnalysisWindowDays(workspaceId, channelId)) * 24;
   const [channel, rule, activeThreads] = await Promise.all([
     db.getChannel(workspaceId, channelId),
     db.getFollowUpRule(workspaceId, channelId),
-    db.getActiveThreads(
-      workspaceId,
-      channelId,
-      lookbackHours,
-    ),
+    db.getActiveThreads(workspaceId, channelId, lookbackHours),
   ]);
   const importance = resolveConversationImportance({
     channelName: channel?.name ?? channelId,
-    conversationType: rule?.conversation_type ?? channel?.conversation_type ?? "public_channel",
+    conversationType:
+      rule?.conversation_type ?? channel?.conversation_type ?? "public_channel",
     clientUserIds: rule?.client_user_ids ?? [],
     importanceTierOverride: rule?.importance_tier_override,
   });
@@ -106,7 +138,8 @@ async function seedInitialArtifacts(
     };
   }
 
-  const threadLimit = importance.effectiveImportanceTier === "high_value" ? 5 : 3;
+  const threadLimit =
+    importance.effectiveImportanceTier === "high_value" ? 5 : 3;
   let seededThreadCount = 0;
 
   for (const thread of activeThreads.slice(0, threadLimit)) {
@@ -134,15 +167,25 @@ export async function runBackfill(
   channelId: string,
   reason: string,
 ): Promise<void> {
-  log.info({ channelId, reason, days: config.BACKFILL_DAYS }, "Backfill started");
+  log.info(
+    { channelId, reason, days: config.BACKFILL_DAYS },
+    "Backfill started",
+  );
 
   await syncChannelMetadata(workspaceId, channelId);
   await db.updateChannelStatus(workspaceId, channelId, "initializing");
+  const { backfillRunId } = await startBackfillRun({
+    workspaceId,
+    channelId,
+    reason,
+  });
   const [channelRecord, rule] = await Promise.all([
     db.getChannel(workspaceId, channelId),
     db.getFollowUpRule(workspaceId, channelId),
   ]);
-  const allowAutomatedMessages = allowsAutomatedMessageIngestion(channelRecord?.name);
+  const allowAutomatedMessages = allowsAutomatedMessageIngestion(
+    channelRecord?.name,
+  );
 
   const oldest = String(
     Math.floor(Date.now() / 1000) - config.BACKFILL_DAYS * 24 * 60 * 60,
@@ -152,37 +195,44 @@ export async function runBackfill(
   let pageCount = 0;
   let messageCount = 0;
   const threadRoots = new Set<string>();
+  let threadFetchFailures = 0;
+  let memberSyncDegraded: boolean;
+  let materializedSummaryArtifactId: string | null;
+  let materializedIntelligenceReadiness:
+    | "missing"
+    | "partial"
+    | "ready"
+    | "stale";
+  let hasDegradations = false;
 
   try {
     const slack = await getSlackClient(workspaceId);
     // Phase 1: Fetch channel history
     while (pageCount < config.BACKFILL_MAX_PAGES) {
       pageCount += 1;
-      const history = await slack.fetchChannelHistory(channelId, oldest, cursor);
+      const history = await slack.fetchChannelHistory(
+        channelId,
+        oldest,
+        cursor,
+      );
       const messages = Array.isArray(history.messages) ? history.messages : [];
 
       for (const message of messages) {
         if (isIngestibleHistoryMessage(message, { allowAutomatedMessages })) {
-          const files = message.files?.map((f) => ({
-            name: f.name,
-            title: f.title,
-            mimetype: f.mimetype,
-            filetype: f.filetype,
-            size: f.size,
-            permalink: f.permalink,
-          }));
-          const links = extractLinks(message.text ?? "");
+          const files = mapSlackFiles(message.files);
+          const extractedText = extractSlackMessageText(message);
+          const links = extractLinks(extractedText);
           const storedMessage = await db.upsertMessage(
             workspaceId,
             channelId,
             message.ts,
             message.user ?? "",
-            message.text ?? "",
+            extractedText,
             "backfill",
             message.thread_ts,
             message.subtype,
             message.bot_id,
-            files && files.length > 0 ? files : null,
+            files,
             links.length > 0 ? links : null,
           );
           await persistCanonicalMessageSignal({
@@ -191,6 +241,13 @@ export async function runBackfill(
             message: storedMessage,
             channel: channelRecord,
             rule,
+          });
+          await recordMessageTruthSuppressed({
+            workspaceId,
+            channelId,
+            messageTs: message.ts,
+            eligibilityStatus: "policy_suppressed",
+            suppressionReason: "channel_not_ready",
           });
           messageCount++;
         }
@@ -205,7 +262,21 @@ export async function runBackfill(
       if (!cursor) break;
     }
 
-    log.info({ channelId, messageCount, threads: threadRoots.size, pages: pageCount }, "Channel history fetched");
+    log.info(
+      { channelId, messageCount, threads: threadRoots.size, pages: pageCount },
+      "Channel history fetched",
+    );
+    await updateBackfillRun({
+      workspaceId,
+      channelId,
+      runId: backfillRunId,
+      phase: "history_import",
+      pagesFetched: pageCount,
+      messagesImported: messageCount,
+      threadRootsDiscovered: threadRoots.size,
+      threadsAttempted: threadRoots.size,
+      threadsFailed: threadFetchFailures,
+    });
 
     // Phase 2: Fetch thread replies
     for (const rootTs of threadRoots) {
@@ -221,17 +292,74 @@ export async function runBackfill(
         );
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : "unknown";
-        log.warn({ channelId, threadTs: rootTs, error: errMsg }, "Thread fetch failed, skipping");
+        log.warn(
+          { channelId, threadTs: rootTs, error: errMsg },
+          "Thread fetch failed, skipping",
+        );
+        threadFetchFailures += 1;
+        hasDegradations = true;
+        await recordIntelligenceDegradation({
+          workspaceId,
+          channelId,
+          scope: "thread",
+          eventType: "thread_fetch_failed",
+          severity: "medium",
+          threadTs: rootTs,
+          details: {
+            error: errMsg,
+          },
+        });
       }
     }
+    await updateBackfillRun({
+      workspaceId,
+      channelId,
+      runId: backfillRunId,
+      phase: "thread_expansion",
+      pagesFetched: pageCount,
+      messagesImported: messageCount,
+      threadRootsDiscovered: threadRoots.size,
+      threadsAttempted: threadRoots.size,
+      threadsFailed: threadFetchFailures,
+    });
 
     // Phase 2.5: Batch resolve user profiles
     const userIds = await db.getDistinctUserIds(workspaceId, channelId);
-    log.info({ channelId, uniqueUsers: userIds.length }, "Resolving user profiles");
+    log.info(
+      { channelId, uniqueUsers: userIds.length },
+      "Resolving user profiles",
+    );
     await batchResolveUsers(workspaceId, userIds, 5);
+    await updateBackfillRun({
+      workspaceId,
+      channelId,
+      runId: backfillRunId,
+      phase: "user_enrichment",
+      pagesFetched: pageCount,
+      messagesImported: messageCount,
+      threadRootsDiscovered: threadRoots.size,
+      threadsAttempted: threadRoots.size,
+      threadsFailed: threadFetchFailures,
+      usersResolved: userIds.length,
+    });
 
     // Phase 2.75: Fetch channel member list from Slack
-    await syncChannelMemberList(workspaceId, channelId);
+    const memberSync = await syncChannelMemberList(workspaceId, channelId);
+    memberSyncDegraded = memberSync.degraded;
+    hasDegradations ||= memberSync.degraded;
+    await updateBackfillRun({
+      workspaceId,
+      channelId,
+      runId: backfillRunId,
+      phase: "member_sync",
+      pagesFetched: pageCount,
+      messagesImported: messageCount,
+      threadRootsDiscovered: threadRoots.size,
+      threadsAttempted: threadRoots.size,
+      threadsFailed: threadFetchFailures,
+      usersResolved: userIds.length,
+      memberSyncResult: memberSync.degraded ? "degraded" : "succeeded",
+    });
 
     // Phase 3: Build derived state
     await refreshChannelState(workspaceId, channelId);
@@ -243,7 +371,10 @@ export async function runBackfill(
     ]);
     const importance = resolveConversationImportance({
       channelName: channel?.name ?? channelId,
-      conversationType: latestRule?.conversation_type ?? channel?.conversation_type ?? "public_channel",
+      conversationType:
+        latestRule?.conversation_type ??
+        channel?.conversation_type ??
+        "public_channel",
       clientUserIds: latestRule?.client_user_ids ?? [],
       importanceTierOverride: latestRule?.importance_tier_override,
     });
@@ -253,23 +384,93 @@ export async function runBackfill(
     // declaring the channel ready. Low-signal channels get an explicit
     // risk-only notice instead of a routine narrative summary.
     if (totalMessages === 0) {
-      await db.upsertChannelState(workspaceId, channelId, {
-        running_summary:
-          "No supported messages were imported for this channel yet. PulseBoard is ready to monitor it, but there is no analyzable conversation history in the current ingest policy.",
-        key_decisions_json: [],
-      });
-    } else if (tierAllowsRoutineChannelSummary(importance.effectiveImportanceTier)) {
-      await materializeBackfillSummary({
+      const artifact = await materializeBackfillSummary({
         workspaceId,
         channelId,
         windowDays: analysisWindowDays,
         publishEvent: true,
       });
+      materializedSummaryArtifactId = artifact.summaryArtifactId;
+      materializedIntelligenceReadiness =
+        artifact.completenessStatus === "no_recent_messages"
+          ? "missing"
+          : artifact.completenessStatus === "partial"
+            ? "partial"
+            : artifact.completenessStatus === "stale"
+              ? "stale"
+              : "ready";
+      hasDegradations ||=
+        artifact.completenessStatus === "partial" ||
+        artifact.degradedReasons.length > 0;
+    } else if (
+      tierAllowsRoutineChannelSummary(importance.effectiveImportanceTier)
+    ) {
+      const artifact = await materializeBackfillSummary({
+        workspaceId,
+        channelId,
+        windowDays: analysisWindowDays,
+        publishEvent: true,
+      });
+      materializedSummaryArtifactId = artifact.summaryArtifactId;
+      materializedIntelligenceReadiness =
+        artifact.completenessStatus === "partial"
+          ? "partial"
+          : artifact.completenessStatus === "stale"
+            ? "stale"
+            : artifact.completenessStatus === "no_recent_messages"
+              ? "missing"
+              : "ready";
+      hasDegradations ||=
+        artifact.completenessStatus === "partial" ||
+        artifact.degradedReasons.length > 0;
     } else {
+      const summary = getRiskOnlyMonitoringNotice();
+      const artifact = await recordSummaryArtifact({
+        workspaceId,
+        channelId,
+        kind: "backfill_rollup",
+        generationMode: "fallback",
+        completenessStatus: "partial",
+        content: summary,
+        keyDecisions: [],
+        summaryFacts: [],
+        coverageStartTs: null,
+        coverageEndTs: null,
+        candidateMessageCount: totalMessages,
+        includedMessageCount: totalMessages,
+        degradedReasons: ["low_signal_channel"],
+        updateChannelTruth: true,
+      });
+      await recordIntelligenceDegradation({
+        workspaceId,
+        channelId,
+        scope: "summary",
+        eventType: "low_signal_channel",
+        severity: "low",
+        details: {
+          summaryKind: "backfill_rollup",
+        },
+      });
+      await insertContextDocumentWithArtifact({
+        workspaceId,
+        channelId,
+        docType: "backfill_rollup",
+        content: summary,
+        tokenCount: Math.ceil(summary.length / 4),
+        embedding: null,
+        sourceTsStart: null,
+        sourceTsEnd: null,
+        sourceThreadTs: null,
+        messageCount: totalMessages,
+        summaryArtifactId: artifact.summaryArtifactId,
+      });
       await db.upsertChannelState(workspaceId, channelId, {
-        running_summary: getRiskOnlyMonitoringNotice(),
+        running_summary: summary,
         key_decisions_json: [],
       });
+      materializedSummaryArtifactId = artifact.summaryArtifactId;
+      materializedIntelligenceReadiness = "partial";
+      hasDegradations = true;
     }
     await persistCanonicalChannelState(workspaceId, channelId, {
       channel,
@@ -288,7 +489,72 @@ export async function runBackfill(
     }
 
     await db.updateChannelStatus(workspaceId, channelId, "ready");
-    const seeded = await seedInitialArtifacts(workspaceId, channelId);
+
+    // Recovery: re-queue messages that were suppressed during backfill
+    // because the channel wasn't ready yet. Now that it IS ready, these
+    // messages should be eligible for deep AI analysis.
+    try {
+      const suppressed = await db.getSuppressedMessagesInReadyChannels(
+        channelId,
+        500,
+      );
+      if (suppressed.length > 0) {
+        const timestamps = suppressed.map((s) => s.message_ts);
+        const recovered = await db.markSuppressedMessagesRecovered(
+          workspaceId,
+          channelId,
+          timestamps,
+        );
+        log.info(
+          { channelId, suppressedFound: suppressed.length, recovered },
+          "Recovered suppressed messages after channel became ready",
+        );
+      }
+    } catch (recoveryErr) {
+      log.warn(
+        {
+          channelId,
+          err: recoveryErr instanceof Error ? recoveryErr.message : "unknown",
+        },
+        "Non-fatal: failed to recover suppressed messages after backfill",
+      );
+    }
+
+    await updateBackfillRun({
+      workspaceId,
+      channelId,
+      runId: backfillRunId,
+      phase: "initial_intelligence",
+      pagesFetched: pageCount,
+      messagesImported: messageCount,
+      threadRootsDiscovered: threadRoots.size,
+      threadsAttempted: threadRoots.size,
+      threadsFailed: threadFetchFailures,
+      usersResolved: userIds.length,
+      memberSyncResult: memberSyncDegraded ? "degraded" : "succeeded",
+      summaryArtifactId: materializedSummaryArtifactId,
+      status: hasDegradations ? "completed_with_degradations" : "completed",
+    });
+    await completeBackfillRun(workspaceId, channelId, backfillRunId, {
+      status: hasDegradations ? "completed_with_degradations" : "completed",
+      summaryArtifactId: materializedSummaryArtifactId,
+      intelligenceReadiness: materializedIntelligenceReadiness,
+    });
+    let seeded: Awaited<ReturnType<typeof seedInitialArtifacts>> = {
+      seededThreadCount: 0,
+      importanceTier: importance.effectiveImportanceTier,
+    };
+
+    try {
+      seeded = await seedInitialArtifacts(workspaceId, channelId);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : "unknown";
+      log.warn(
+        { channelId, error: errMsg },
+        "Initial artifact seeding failed after backfill completion",
+      );
+    }
+
     log.info(
       {
         channelId,
@@ -302,6 +568,7 @@ export async function runBackfill(
     const errMsg = error instanceof Error ? error.message : "unknown_error";
     log.error({ channelId, error: errMsg }, "Backfill failed");
     await db.updateChannelStatus(workspaceId, channelId, "failed");
+    await failBackfillRun(workspaceId, channelId, backfillRunId);
     throw error;
   }
 }
@@ -320,31 +587,29 @@ async function fetchAndStoreThread(
 
   while (pageCount < config.BACKFILL_MAX_PAGES) {
     pageCount += 1;
-    const response = await slack.fetchThreadReplies(channelId, threadTs, cursor);
+    const response = await slack.fetchThreadReplies(
+      channelId,
+      threadTs,
+      cursor,
+    );
     const messages = Array.isArray(response.messages) ? response.messages : [];
 
     for (const message of messages) {
       if (isIngestibleHistoryMessage(message, { allowAutomatedMessages })) {
-        const threadFiles = message.files?.map((f) => ({
-          name: f.name,
-          title: f.title,
-          mimetype: f.mimetype,
-          filetype: f.filetype,
-          size: f.size,
-          permalink: f.permalink,
-        }));
-        const threadLinks = extractLinks(message.text ?? "");
+        const threadFiles = mapSlackFiles(message.files);
+        const extractedText = extractSlackMessageText(message);
+        const threadLinks = extractLinks(extractedText);
         const storedMessage = await db.upsertMessage(
           workspaceId,
           channelId,
           message.ts,
           message.user ?? "",
-          message.text ?? "",
+          extractedText,
           "backfill",
           message.thread_ts ?? threadTs,
           message.subtype,
           message.bot_id,
-          threadFiles && threadFiles.length > 0 ? threadFiles : null,
+          threadFiles,
           threadLinks.length > 0 ? threadLinks : null,
         );
         await persistCanonicalMessageSignal({
@@ -357,7 +622,12 @@ async function fetchAndStoreThread(
 
         // Store thread edge
         if (message.ts !== threadTs) {
-          await db.upsertThreadEdge(workspaceId, channelId, threadTs, message.ts);
+          await db.upsertThreadEdge(
+            workspaceId,
+            channelId,
+            threadTs,
+            message.ts,
+          );
         }
       }
     }
@@ -371,12 +641,13 @@ async function refreshChannelState(
   workspaceId: string,
   channelId: string,
 ): Promise<void> {
-  const [messages, threads, totalMessages, participantCounts] = await Promise.all([
-    db.getMessages(workspaceId, channelId, { limit: 200 }),
-    db.getThreads(workspaceId, channelId),
-    db.getMessageCount(workspaceId, channelId),
-    db.getChannelParticipantCounts(workspaceId, channelId),
-  ]);
+  const [messages, threads, totalMessages, participantCounts] =
+    await Promise.all([
+      db.getMessages(workspaceId, channelId, { limit: 200 }),
+      db.getThreads(workspaceId, channelId),
+      db.getMessageCount(workspaceId, channelId),
+      db.getChannelParticipantCounts(workspaceId, channelId),
+    ]);
 
   // Build participants map
   const participants: Record<string, number> = {};
@@ -437,4 +708,411 @@ async function refreshChannelState(
       },
     },
   });
+}
+
+// ─── Tiered Backfill ────────────────────────────────────────────────────────
+
+/**
+ * Tier 1 — Bootstrap (<5 seconds).
+ * Syncs metadata + members, marks channel ready immediately, then chains to Tier 2.
+ */
+export async function runBackfillTier1(
+  workspaceId: string,
+  channelId: string,
+  reason: string,
+): Promise<void> {
+  log.info({ channelId, reason }, "Tier 1 backfill started");
+
+  await syncChannelMetadata(workspaceId, channelId);
+  await syncChannelMemberList(workspaceId, channelId);
+  await db.updateChannelStatus(workspaceId, channelId, "ready");
+  await db.upsertChannelState(workspaceId, channelId, {
+    intelligence_readiness: "bootstrap",
+  });
+  await db.updateBackfillTier(workspaceId, channelId, 1);
+
+  const { backfillRunId } = await startBackfillRun({
+    workspaceId,
+    channelId,
+    reason,
+  });
+
+  await enqueueBackfillTier2(workspaceId, channelId, backfillRunId, reason);
+
+  log.info(
+    { channelId, backfillRunId },
+    "Tier 1 complete — channel ready with bootstrap intelligence",
+  );
+}
+
+/**
+ * Tier 2 — Recent history (<30 seconds).
+ * Fetches last 24 hours of messages, builds a quick summary, then chains to Tier 3.
+ */
+export async function runBackfillTier2(
+  workspaceId: string,
+  channelId: string,
+  backfillRunId: string,
+  reason: string,
+): Promise<void> {
+  log.info({ channelId, backfillRunId }, "Tier 2 backfill started");
+
+  const slack = await getSlackClient(workspaceId);
+  const oldest = String(Math.floor(Date.now() / 1000) - 24 * 60 * 60);
+
+  const [channelRecord, rule] = await Promise.all([
+    db.getChannel(workspaceId, channelId),
+    db.getFollowUpRule(workspaceId, channelId),
+  ]);
+  const allowAutomatedMessages = allowsAutomatedMessageIngestion(
+    channelRecord?.name,
+  );
+
+  let cursor: string | undefined;
+  let pageCount = 0;
+  let messageCount = 0;
+  let oldestFetchedTs: string | null = null;
+  const maxPages = 3;
+
+  while (pageCount < maxPages) {
+    pageCount += 1;
+    const history = await slack.fetchChannelHistory(channelId, oldest, cursor);
+    const messages = Array.isArray(history.messages) ? history.messages : [];
+
+    for (const message of messages) {
+      if (isIngestibleHistoryMessage(message, { allowAutomatedMessages })) {
+        const files = mapSlackFiles(message.files);
+        const extractedText = extractSlackMessageText(message);
+        const links = extractLinks(extractedText);
+        const storedMessage = await db.upsertMessage(
+          workspaceId,
+          channelId,
+          message.ts,
+          message.user ?? "",
+          extractedText,
+          "backfill",
+          message.thread_ts,
+          message.subtype,
+          message.bot_id,
+          files,
+          links.length > 0 ? links : null,
+        );
+        await persistCanonicalMessageSignal({
+          workspaceId,
+          channelId,
+          message: storedMessage,
+          channel: channelRecord,
+          rule,
+        });
+        messageCount++;
+
+        // Track the oldest ts we actually stored
+        if (!oldestFetchedTs || message.ts < oldestFetchedTs) {
+          oldestFetchedTs = message.ts;
+        }
+      }
+    }
+
+    cursor = history.response_metadata?.next_cursor;
+    if (!cursor) break;
+  }
+
+  log.info(
+    { channelId, messageCount, pages: pageCount, oldestFetchedTs },
+    "Tier 2 history fetched",
+  );
+
+  await refreshChannelState(workspaceId, channelId);
+
+  // Try to materialize a quick summary
+  try {
+    await materializeBackfillSummary({
+      workspaceId,
+      channelId,
+      publishEvent: true,
+    });
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : "unknown";
+    log.warn(
+      { channelId, error: errMsg },
+      "Tier 2 quick summary materialization failed, continuing",
+    );
+  }
+
+  await db.upsertChannelState(workspaceId, channelId, {
+    intelligence_readiness: "partial",
+  });
+  await db.updateBackfillTier(workspaceId, channelId, 2, oldestFetchedTs);
+
+  await enqueueBackfillTier3(
+    workspaceId,
+    channelId,
+    backfillRunId,
+    reason,
+    oldestFetchedTs,
+  );
+
+  log.info(
+    { channelId, backfillRunId, messageCount, oldestFetchedTs },
+    "Tier 2 complete — channel has recent intelligence",
+  );
+}
+
+/**
+ * Tier 3 — Deep backfill (minutes).
+ * Fetches from 30 days ago up to the Tier 2 coverage boundary,
+ * does thread expansion, user enrichment, full summarization, and artifact seeding.
+ */
+export async function runBackfillTier3(
+  workspaceId: string,
+  channelId: string,
+  backfillRunId: string,
+  reason: string,
+  tier2CoverageOldestTs: string | null,
+): Promise<void> {
+  log.info(
+    { channelId, backfillRunId, reason, tier2CoverageOldestTs },
+    "Tier 3 backfill started",
+  );
+
+  const [channelRecord, rule] = await Promise.all([
+    db.getChannel(workspaceId, channelId),
+    db.getFollowUpRule(workspaceId, channelId),
+  ]);
+  const allowAutomatedMessages = allowsAutomatedMessageIngestion(
+    channelRecord?.name,
+  );
+
+  const oldest = String(
+    Math.floor(Date.now() / 1000) - config.BACKFILL_DAYS * 24 * 60 * 60,
+  );
+
+  let cursor: string | undefined;
+  let pageCount = 0;
+  let messageCount = 0;
+  const threadRoots = new Set<string>();
+  let threadFetchFailures = 0;
+  let hasDegradations = false;
+
+  try {
+    const slack = await getSlackClient(workspaceId);
+
+    // Phase 1: Fetch channel history from 30d ago, skipping messages already covered by T2
+    while (pageCount < config.BACKFILL_MAX_PAGES) {
+      pageCount += 1;
+      const history = await slack.fetchChannelHistory(
+        channelId,
+        oldest,
+        cursor,
+      );
+      const messages = Array.isArray(history.messages) ? history.messages : [];
+
+      for (const message of messages) {
+        // Skip messages already covered by Tier 2
+        if (
+          tier2CoverageOldestTs &&
+          typeof message.ts === "string" &&
+          message.ts >= tier2CoverageOldestTs
+        ) {
+          continue;
+        }
+
+        if (isIngestibleHistoryMessage(message, { allowAutomatedMessages })) {
+          const files = mapSlackFiles(message.files);
+          const extractedText = extractSlackMessageText(message);
+          const links = extractLinks(extractedText);
+          const storedMessage = await db.upsertMessage(
+            workspaceId,
+            channelId,
+            message.ts,
+            message.user ?? "",
+            extractedText,
+            "backfill",
+            message.thread_ts,
+            message.subtype,
+            message.bot_id,
+            files,
+            links.length > 0 ? links : null,
+          );
+          await persistCanonicalMessageSignal({
+            workspaceId,
+            channelId,
+            message: storedMessage,
+            channel: channelRecord,
+            rule,
+          });
+          await recordMessageTruthSuppressed({
+            workspaceId,
+            channelId,
+            messageTs: message.ts,
+            eligibilityStatus: "policy_suppressed",
+            suppressionReason: "channel_not_ready",
+          });
+          messageCount++;
+        }
+
+        if (typeof message.ts === "string" && (message.reply_count ?? 0) > 0) {
+          threadRoots.add(message.ts);
+        }
+      }
+
+      cursor = history.response_metadata?.next_cursor;
+      if (!cursor) break;
+    }
+
+    log.info(
+      { channelId, messageCount, threads: threadRoots.size, pages: pageCount },
+      "Tier 3 history fetched",
+    );
+
+    await updateBackfillRun({
+      workspaceId,
+      channelId,
+      runId: backfillRunId,
+      phase: "history_import",
+      pagesFetched: pageCount,
+      messagesImported: messageCount,
+      threadRootsDiscovered: threadRoots.size,
+      threadsAttempted: threadRoots.size,
+      threadsFailed: threadFetchFailures,
+    });
+
+    // Phase 2: Thread expansion
+    for (const rootTs of threadRoots) {
+      try {
+        await fetchAndStoreThread(
+          workspaceId,
+          channelId,
+          rootTs,
+          allowAutomatedMessages,
+          channelRecord,
+          rule,
+        );
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : "unknown";
+        log.warn(
+          { channelId, threadTs: rootTs, error: errMsg },
+          "Tier 3 thread fetch failed, skipping",
+        );
+        threadFetchFailures += 1;
+        hasDegradations = true;
+        await recordIntelligenceDegradation({
+          workspaceId,
+          channelId,
+          scope: "thread",
+          eventType: "thread_fetch_failed",
+          severity: "medium",
+          threadTs: rootTs,
+          details: { error: errMsg },
+        });
+      }
+    }
+
+    // Phase 2.5: User enrichment
+    const userIds = await db.getDistinctUserIds(workspaceId, channelId);
+    await batchResolveUsers(workspaceId, userIds, 5);
+
+    // Phase 3: Full summarization
+    await refreshChannelState(workspaceId, channelId);
+
+    const analysisWindowDays = await db.getEffectiveAnalysisWindowDays(
+      workspaceId,
+      channelId,
+    );
+    const importance = resolveConversationImportance({
+      channelName: channelRecord?.name ?? channelId,
+      conversationType:
+        rule?.conversation_type ??
+        channelRecord?.conversation_type ??
+        "public_channel",
+      clientUserIds: rule?.client_user_ids ?? [],
+      importanceTierOverride: rule?.importance_tier_override,
+    });
+
+    if (tierAllowsRoutineChannelSummary(importance.effectiveImportanceTier)) {
+      try {
+        await materializeBackfillSummary({
+          workspaceId,
+          channelId,
+          windowDays: analysisWindowDays,
+          publishEvent: true,
+        });
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : "unknown";
+        log.warn(
+          { channelId, error: errMsg },
+          "Tier 3 summary materialization failed",
+        );
+        hasDegradations = true;
+      }
+    }
+
+    await persistCanonicalChannelState(workspaceId, channelId, {
+      channel: channelRecord,
+      rule,
+    });
+
+    // Mark full intelligence ready
+    await db.upsertChannelState(workspaceId, channelId, {
+      intelligence_readiness: "ready",
+    });
+    await db.updateBackfillTier(workspaceId, channelId, null);
+
+    // Recovery: re-queue suppressed messages
+    try {
+      const suppressed = await db.getSuppressedMessagesInReadyChannels(
+        channelId,
+        500,
+      );
+      if (suppressed.length > 0) {
+        const timestamps = suppressed.map((s) => s.message_ts);
+        const recovered = await db.markSuppressedMessagesRecovered(
+          workspaceId,
+          channelId,
+          timestamps,
+        );
+        log.info(
+          { channelId, suppressedFound: suppressed.length, recovered },
+          "Tier 3: recovered suppressed messages",
+        );
+      }
+    } catch (recoveryErr) {
+      log.warn(
+        {
+          channelId,
+          err:
+            recoveryErr instanceof Error ? recoveryErr.message : "unknown",
+        },
+        "Non-fatal: failed to recover suppressed messages in tier 3",
+      );
+    }
+
+    // Seed initial artifacts
+    try {
+      await seedInitialArtifacts(workspaceId, channelId);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : "unknown";
+      log.warn(
+        { channelId, error: errMsg },
+        "Tier 3 artifact seeding failed",
+      );
+    }
+
+    // Complete the backfill run
+    await completeBackfillRun(workspaceId, channelId, backfillRunId, {
+      status: hasDegradations ? "completed_with_degradations" : "completed",
+      summaryArtifactId: null,
+      intelligenceReadiness: "ready",
+    });
+
+    log.info(
+      { channelId, backfillRunId, messageCount },
+      "Tier 3 complete — full intelligence ready",
+    );
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : "unknown_error";
+    log.error({ channelId, error: errMsg }, "Tier 3 backfill failed");
+    await failBackfillRun(workspaceId, channelId, backfillRunId);
+    throw error;
+  }
 }

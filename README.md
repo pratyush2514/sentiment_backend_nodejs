@@ -30,6 +30,25 @@ Slack Event → Signature Verify → Dedupe → Enqueue message.ingest
 | `thread.reconcile` | Heal missed thread replies |
 | `user.resolve` | Resolve Slack user profiles |
 
+### Fathom Meeting Pipeline
+
+When `FATHOM_ENABLED=true`, PulseBoard runs a separate meeting intelligence pipeline:
+
+```
+Fathom webhook -> meeting.ingest
+  -> exact channel resolution + meeting snapshot flags
+  -> meeting.extract
+  -> meeting.digest (optional)
+  -> meeting.obligation_sync (optional)
+```
+
+Operational notes:
+
+- Set `PUBLIC_BASE_URL` so webhook URLs are generated from trusted config instead of request headers.
+- Keep `FATHOM_ALLOW_INSECURE_WEBHOOKS=false` outside isolated local development.
+- `digest_enabled` and `tracking_enabled` are snapped onto each meeting when it is linked so retries stay deterministic.
+- Use the repair CLI below after rollout if you need to clear stale digest claims, merge legacy duplicate obligations, encrypt old plaintext webhook secrets, or audit legacy pattern-based channel links.
+
 ## Quick Start
 
 ### Prerequisites
@@ -138,6 +157,7 @@ pnpm run start:scheduler # Run compiled output as scheduler role
 pnpm run start:prod:web
 pnpm run start:prod:worker
 pnpm run start:prod:scheduler
+pnpm run fathom:repair -- --scope stale-digests --all
 pnpm run test         # Run tests
 pnpm run test:watch   # Watch mode
 pnpm run typecheck    # Type check without emit
@@ -158,6 +178,22 @@ See [.env.example](.env.example) for all environment variables. Key settings:
 | `ROLLUP_MSG_THRESHOLD` | `20` | Messages before channel rollup |
 | `MESSAGE_RETENTION_DAYS` | `90` | Auto-delete messages after N days |
 | `ANALYTICS_RETENTION_DAYS` | `180` | Auto-delete analytics after N days |
+| `PUBLIC_BASE_URL` | `""` | Trusted public base URL for OAuth/webhook callbacks |
+| `FATHOM_ENABLED` | `false` | Enables the Fathom meeting pipeline |
+| `FATHOM_ALLOW_INSECURE_WEBHOOKS` | `false` | Explicit local-only bypass for webhook signature checks |
+
+### Fathom repair CLI
+
+Dry-run by default:
+
+```bash
+pnpm run fathom:repair -- --scope stale-digests --all
+pnpm run fathom:repair -- --scope dedupe-obligations --workspace <workspace_id>
+pnpm run fathom:repair -- --scope encrypt-webhook-secrets --all
+pnpm run fathom:repair -- --scope audit-channel-links --all
+```
+
+Add `--apply` to execute the repair instead of previewing it.
 
 ## Data Retention
 

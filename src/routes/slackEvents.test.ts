@@ -56,6 +56,7 @@ vi.mock("../db/queries.js", () => ({
 
 vi.mock("../queue/boss.js", () => ({
   enqueueBackfill: vi.fn().mockResolvedValue("job-bf-1"),
+  enqueueBackfillTier1: vi.fn().mockResolvedValue("job-bf-t1-1"),
   enqueueMessageIngest: vi.fn().mockResolvedValue("job-mi-1"),
   enqueueLLMAnalyze: vi.fn().mockResolvedValue("job-llm-edit-1"),
 }));
@@ -313,7 +314,7 @@ describe("Slack Events Route", () => {
       "C456",
       { newStatus: "pending" },
     );
-    expect(boss.enqueueBackfill).toHaveBeenCalled();
+    expect(boss.enqueueBackfillTier1).toHaveBeenCalled();
   });
 
   it("preserves an existing private channel when metadata lookup fails during bot join", async () => {

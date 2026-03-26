@@ -10,8 +10,15 @@ import {
   tierAllowsRoutineMessageAnalysis,
 } from "../../services/conversationImportance.js";
 import { eventBus } from "../../services/eventBus.js";
+import { detectFathomLinks } from "../../services/fathomLinkDetector.js";
 import { processFollowUpsForMessage } from "../../services/followUpMonitor.js";
+import {
+  recordMessageTruthState,
+  recordMessageTruthSuppressed,
+} from "../../services/intelligenceTruth.js";
+import { checkIntentContinuation } from "../../services/intentContinuation.js";
 import { evaluateLLMGate } from "../../services/llmGate.js";
+import { checkMeetingObligationProgress } from "../../services/meetingSlackWatcher.js";
 import { classifyMessageTriage, shouldEnrichMessageSignal, shouldRefreshThreadInsight } from "../../services/messageTriage.js";
 import { normalizeText, buildFileContext, buildLinkContext, extractLinks } from "../../services/textNormalizer.js";
 import { resolveUserProfile } from "../../services/userProfiles.js";
@@ -59,13 +66,14 @@ export async function handleMessageIngest(
     // after backfill completes, which prevents alert/DM/follow-up spam.
     const channel = await db.getChannel(workspaceId, channelId);
     if (channel?.status !== "ready") {
-      if (
-        storedMessage.analysis_status === "pending" ||
-        storedMessage.analysis_status === "processing" ||
-        storedMessage.analysis_status === "failed"
-      ) {
-        await db.updateMessageAnalysisStatus(workspaceId, channelId, ts, "skipped");
-      }
+      const finalAnalysisStatus = await recordMessageTruthSuppressed({
+        workspaceId,
+        channelId,
+        messageTs: ts,
+        eligibilityStatus: "policy_suppressed",
+        suppressionReason: "channel_not_ready",
+      });
+      await db.updateMessageAnalysisStatus(workspaceId, channelId, ts, finalAnalysisStatus);
       // Keep channel recency fresh even while setup is still catching up.
       await db.updateChannelLastEvent(workspaceId, channelId);
       if (!isAutomatedMessage) {
@@ -78,7 +86,7 @@ export async function handleMessageIngest(
         ts,
         userId,
         threadTs: threadTs ?? null,
-        analysisStatus: "skipped",
+        analysisStatus: finalAnalysisStatus,
       });
       log.debug({ jobId: job.id, channelId, ts, channelStatus: channel?.status }, "Channel not ready — message stored, analysis skipped");
       continue;
@@ -157,13 +165,39 @@ export async function handleMessageIngest(
         text: normalizedText,
         rawText: text,
       });
+
+      // Check for meeting obligation progress (lightweight, only queries if open obligations exist)
+      if (config.FATHOM_ENABLED) {
+        await checkMeetingObligationProgress(workspaceId, channelId, normalizedText, userId, ts);
+        // Detect Fathom share URLs and auto-link meetings to this channel
+        await detectFathomLinks(workspaceId, channelId, text, userId, ts);
+      }
+
+      // Intent continuation: auto-resolve follow-ups when someone says "done", "sent it", etc.
+      checkIntentContinuation({
+        workspaceId,
+        channelId,
+        messageTs: ts,
+        threadTs: threadTs ?? null,
+        userId,
+        text: normalizedText,
+        hasFiles: (files?.length ?? 0) > 0,
+      }).catch((err) => {
+        log.debug({ err: err instanceof Error ? err.message : "unknown" }, "Intent continuation check failed (non-fatal)");
+      });
     }
+
+    // Fetch AI classification (non-blocking — falls back to heuristic if not available)
+    const classification = await db.getChannelClassification(workspaceId, channelId);
 
     const importance = resolveConversationImportance({
       channelName: channel?.name ?? channelId,
       conversationType: rule?.conversation_type ?? channel?.conversation_type ?? "public_channel",
       clientUserIds: rule?.client_user_ids ?? [],
       importanceTierOverride: rule?.importance_tier_override,
+      channelType: classification?.channel_type ?? null,
+      classificationConfidence: classification?.confidence ?? null,
+      classificationSource: classification?.classification_source ?? null,
     });
     const importanceTier = importance.effectiveImportanceTier;
 
@@ -198,6 +232,7 @@ export async function handleMessageIngest(
       })
       : null;
     let finalAnalysisStatus = storedMessage.analysis_status;
+    const eligibleForAnalysis = shouldEnrichMessageSignal(triage);
 
     if (
       !realtimeJobId &&
@@ -207,8 +242,28 @@ export async function handleMessageIngest(
         storedMessage.analysis_status === "failed"
       )
     ) {
-      await db.updateMessageAnalysisStatus(workspaceId, channelId, ts, "skipped");
-      finalAnalysisStatus = "skipped";
+      finalAnalysisStatus = await recordMessageTruthState({
+        workspaceId,
+        channelId,
+        messageTs: ts,
+        eligibilityStatus: eligibleForAnalysis ? "policy_suppressed" : "not_candidate",
+        executionStatus: "not_run",
+        qualityStatus: "none",
+        suppressionReason: eligibleForAnalysis ? "importance_tier" : "not_candidate",
+      });
+      await db.updateMessageAnalysisStatus(workspaceId, channelId, ts, finalAnalysisStatus);
+    }
+
+    if (realtimeJobId) {
+      finalAnalysisStatus = await recordMessageTruthState({
+        workspaceId,
+        channelId,
+        messageTs: ts,
+        eligibilityStatus: "eligible",
+        executionStatus: "pending",
+        qualityStatus: "none",
+      });
+      await db.updateMessageAnalysisStatus(workspaceId, channelId, ts, finalAnalysisStatus);
     }
 
     // Preserve cooldown semantics for explicit gate-based triggers.

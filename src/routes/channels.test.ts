@@ -4,6 +4,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type {
   ChannelHealthCountsRow,
   ChannelStateRow,
+  MeetingObligationRow,
+  MeetingRow,
 } from "../types/database.js";
 
 vi.mock("../config.js", () => ({
@@ -32,10 +34,21 @@ vi.mock("../db/queries.js", () => ({
   getChannelState: vi.fn(),
   listConversationPolicies: vi.fn().mockResolvedValue([]),
   getMessageCount: vi.fn(),
+  getMessageCountInWindow: vi.fn(),
   getChannelParticipantCounts: vi.fn(),
   getChannelHealthCounts: vi.fn().mockResolvedValue([]),
+  getMeetingObligationCounts: vi.fn().mockResolvedValue({ openCount: 0, overdueCount: 0 }),
+  listMeetingObligationCountsByChannel: vi.fn().mockResolvedValue([]),
+  getRecentChannelActivityMetrics: vi.fn().mockResolvedValue({
+    windowHours: 24,
+    messageCount: 0,
+    activeThreads: 0,
+    openFollowUps: 0,
+    resolvedFollowUps: 0,
+  }),
   getRelatedIncidentMentions: vi.fn().mockResolvedValue([]),
   getThreads: vi.fn(),
+  getActiveThreadsSinceTs: vi.fn(),
   getThreadInsightsBatch: vi.fn().mockResolvedValue([]),
   getThreadInsight: vi.fn().mockResolvedValue(null),
   getUserProfiles: vi.fn(),
@@ -51,6 +64,8 @@ vi.mock("../db/queries.js", () => ({
   getMessageAnalytics: vi.fn(),
   getEffectiveAnalysisWindowDays: vi.fn().mockResolvedValue(7),
   getFollowUpRule: vi.fn().mockResolvedValue(null),
+  listMeetingsForChannel: vi.fn().mockResolvedValue([]),
+  getMeetingObligations: vi.fn().mockResolvedValue([]),
   upsertChannel: vi.fn(),
   getChannelSummary: vi.fn(),
   getUnresolvedMessageTs: vi.fn().mockResolvedValue(["1710000000.000100"]),
@@ -83,11 +98,38 @@ vi.mock("../services/canonicalChannelState.js", () => ({
   persistCanonicalChannelState: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("../services/intelligenceTruth.js", () => ({
+  fetchChannelTruthSnapshots: vi.fn().mockResolvedValue(new Map()),
+  fetchChannelTruthSnapshot: vi.fn().mockResolvedValue({
+    ingestReadiness: "ready",
+    intelligenceReadiness: "ready",
+    latestSummaryCompleteness: "complete",
+    hasActiveDegradations: false,
+    currentSummaryArtifactId: null,
+    activeBackfillRunId: null,
+    summaryArtifact: null,
+    backfillRun: null,
+    degradationSignals: [],
+  }),
+  fetchChannelTruthCounts: vi.fn().mockResolvedValue({
+    total: 0,
+    eligible: 0,
+    pending: 0,
+    processing: 0,
+    completed: 0,
+    failed: 0,
+    suppressed: 0,
+    partial: 0,
+  }),
+  fetchMessageTruthStates: vi.fn().mockResolvedValue(new Map()),
+}));
+
 const db = await import("../db/queries.js");
 const _boss = await import("../queue/boss.js");
 const channelMetadata = await import("../services/channelMetadata.js");
 const canonicalMessageSignals = await import("../services/canonicalMessageSignals.js");
 const canonicalChannelState = await import("../services/canonicalChannelState.js");
+const intelligenceTruth = await import("../services/intelligenceTruth.js");
 const { channelsRouter } = await import("./channels.js");
 
 function makeChannelState(
@@ -98,6 +140,10 @@ function makeChannelState(
     workspace_id: "default",
     channel_id: "C123ABC",
     running_summary: "Test summary",
+    live_summary: "",
+    live_summary_updated_at: null,
+    live_summary_source_ts_start: null,
+    live_summary_source_ts_end: null,
     participants_json: {},
     active_threads_json: [],
     key_decisions_json: [],
@@ -172,6 +218,77 @@ function makeHealthCounts(
   };
 }
 
+function makeMeeting(
+  overrides: Partial<MeetingRow> = {},
+): MeetingRow {
+  return {
+    id: "meeting-1",
+    workspace_id: "default",
+    fathom_call_id: "call-1",
+    channel_id: "C123ABC",
+    title: "Weekly Client Sync",
+    started_at: new Date(),
+    ended_at: new Date(),
+    duration_seconds: 1800,
+    participants_json: [],
+    fathom_summary: "Client reviewed the delivery plan and called out one blocker.",
+    fathom_action_items_json: [],
+    fathom_highlights_json: [],
+    recording_url: null,
+    share_url: null,
+    transcript_text: null,
+    meeting_sentiment: "concerned",
+    risk_signals_json: [{ signal: "Timeline risk remains open." }],
+    processing_status: "completed",
+    extraction_status: "completed",
+    meeting_source: "api",
+    digest_posted_at: null,
+    digest_claimed_at: null,
+    digest_message_ts: null,
+    digest_thread_ts: null,
+    digest_enabled: true,
+    tracking_enabled: true,
+    duplicate_of_meeting_id: null,
+    import_mode: "live",
+    last_error: null,
+    attempt_count: 1,
+    created_at: new Date(),
+    updated_at: new Date(),
+    ...overrides,
+  };
+}
+
+function makeMeetingObligation(
+  overrides: Partial<MeetingObligationRow> = {},
+): MeetingObligationRow {
+  return {
+    id: "obligation-1",
+    workspace_id: "default",
+    meeting_id: "meeting-1",
+    channel_id: "C123ABC",
+    dedupe_key: "risk|timeline risk remains open||",
+    obligation_type: "risk",
+    title: "Timeline risk remains open",
+    description: null,
+    owner_user_id: null,
+    owner_name: null,
+    assignee_user_ids: [],
+    due_date: null,
+    due_date_source: null,
+    priority: "medium",
+    status: "open",
+    follow_up_item_id: null,
+    slack_evidence_json: [],
+    extraction_confidence: 0.9,
+    source_context: null,
+    resolved_at: null,
+    resolution_evidence: null,
+    created_at: new Date(),
+    updated_at: new Date(),
+    ...overrides,
+  };
+}
+
 function forceLocalhostListen(app: express.Express) {
   const originalListen = app.listen.bind(app);
   app.listen = ((...args: unknown[]) => {
@@ -216,8 +333,24 @@ beforeEach(() => {
   vi.mocked(db.getEffectiveAnalysisWindowDays).mockResolvedValue(7);
   vi.mocked(db.getUnresolvedMessageTs).mockResolvedValue(["1710000000.000100"]);
   vi.mocked(db.getFollowUpRule).mockResolvedValue(null);
+  vi.mocked(db.getMessageCountInWindow).mockResolvedValue(0);
+  vi.mocked(db.getActiveThreadsSinceTs).mockResolvedValue([]);
   vi.mocked(db.getRelatedIncidentMentions).mockResolvedValue([] as never);
+  vi.mocked(db.getMeetingObligationCounts).mockResolvedValue({
+    openCount: 0,
+    overdueCount: 0,
+  } as never);
+  vi.mocked(db.listMeetingObligationCountsByChannel).mockResolvedValue([] as never);
+  vi.mocked(db.getRecentChannelActivityMetrics).mockResolvedValue({
+    windowHours: 24,
+    messageCount: 0,
+    activeThreads: 0,
+    openFollowUps: 0,
+    resolvedFollowUps: 0,
+  } as never);
   vi.mocked(db.listConversationPolicies).mockResolvedValue([]);
+  vi.mocked(db.listMeetingsForChannel).mockResolvedValue([] as never);
+  vi.mocked(db.getMeetingObligations).mockResolvedValue([] as never);
   vi.mocked(canonicalMessageSignals.hydrateChannelCanonicalSignals).mockResolvedValue({
     hydratedCount: 0,
     inspectedCount: 0,
@@ -256,6 +389,8 @@ describe("Channel Routes", () => {
           message_disposition_counts_json: null,
           effective_channel_mode: null,
           message_count: "734",
+          active_message_count: "16",
+          total_imported_message_count: "734",
         },
       ]);
       vi.mocked(db.getChannelHealthCounts).mockResolvedValue([
@@ -280,8 +415,8 @@ describe("Channel Routes", () => {
       expect(res.body.total).toBe(1);
       expect(res.body.channels[0]).toMatchObject({
         channelId: "C123ABC",
-        signal: "escalating",
-        health: "at-risk",
+        signal: "elevated",
+        health: "attention",
         healthCounts: {
           openAlertCount: 2,
           highSeverityAlertCount: 0,
@@ -311,6 +446,8 @@ describe("Channel Routes", () => {
           message_disposition_counts_json: null,
           effective_channel_mode: null,
           message_count: "44",
+          active_message_count: "8",
+          total_imported_message_count: "44",
         },
       ]);
       vi.mocked(db.getChannelHealthCounts).mockResolvedValue([
@@ -408,6 +545,7 @@ describe("Channel Routes", () => {
         }),
       );
       vi.mocked(db.getMessageCount).mockResolvedValue(42);
+      vi.mocked(db.getMessageCountInWindow).mockResolvedValue(14);
       vi.mocked(db.getChannelParticipantCounts).mockResolvedValue([{ user_id: "U1", message_count: 7 }]);
       vi.mocked(db.getChannelHealthCounts).mockResolvedValue([
         makeHealthCounts({
@@ -424,7 +562,7 @@ describe("Channel Routes", () => {
           neutral_count: "4",
         }),
       ]);
-      vi.mocked(db.getThreads).mockResolvedValue([]);
+      vi.mocked(db.getActiveThreadsSinceTs).mockResolvedValue([]);
       vi.mocked(db.getUserProfiles).mockResolvedValue([
         {
           id: "p1",
@@ -444,13 +582,26 @@ describe("Channel Routes", () => {
       const res = await request(createApp()).get("/api/channels/C123ABC/state");
       expect(res.status).toBe(200);
       expect(res.body.channelId).toBe("C123ABC");
+      expect(res.body.activeWindowSummary).toBe("Test summary");
       expect(res.body.runningSummary).toBe("Test summary");
+      expect(res.body.liveSummary).toBeNull();
       expect(res.body.keyDecisions).toEqual(["decision1"]);
       expect(res.body.messageCount).toBe(42);
       expect(res.body.participants[0].displayName).toBe("Alice");
       expect(res.body.participants[0].messageCount).toBe(7);
       expect(res.body.signal).toBe("elevated");
       expect(res.body.health).toBe("attention");
+      expect(res.body.recentActivity).toEqual({
+        label: "Recent activity",
+        windowHours: 24,
+        messageCount: 0,
+        activeThreads: 0,
+        openFollowUps: 0,
+        resolvedFollowUps: 0,
+      });
+      expect(res.body.meetingContext).toBeNull();
+      expect(res.body.unifiedDrivers.length).toBeGreaterThan(0);
+      expect(res.body.unifiedDrivers[0].source).toBe("slack");
       expect(res.body.healthCounts).toEqual({
         openAlertCount: 1,
         highSeverityAlertCount: 0,
@@ -488,6 +639,196 @@ describe("Channel Routes", () => {
       expect(res.body.effectiveImportanceTier).toBe("standard");
     });
 
+    it("prefers evidence-backed decisions from the current summary artifact", async () => {
+      vi.mocked(db.getChannel).mockResolvedValue({
+        id: "uuid-1",
+        workspace_id: "default",
+        channel_id: "C123ABC",
+        name: "sage_team",
+        conversation_type: "public_channel",
+        status: "ready",
+        initialized_at: new Date(),
+        last_event_at: new Date(),
+        created_at: new Date(),
+        updated_at: new Date(),
+      });
+      vi.mocked(db.getChannelState).mockResolvedValue(
+        makeChannelState({
+          key_decisions_json: ["legacy decision"],
+        }),
+      );
+      vi.mocked(db.getMessageCount).mockResolvedValue(42);
+      vi.mocked(db.getMessageCountInWindow).mockResolvedValue(14);
+      vi.mocked(db.getChannelParticipantCounts).mockResolvedValue([]);
+      vi.mocked(db.getChannelHealthCounts).mockResolvedValue([
+        makeHealthCounts({
+          total_message_count: "14",
+          total_analyzed_count: "8",
+          neutral_count: "8",
+        }),
+      ]);
+      vi.mocked(db.getActiveThreadsSinceTs).mockResolvedValue([]);
+      vi.mocked(db.getUserProfiles).mockResolvedValue([]);
+      vi.mocked(intelligenceTruth.fetchChannelTruthSnapshot).mockResolvedValue({
+        ingestReadiness: "ready",
+        intelligenceReadiness: "ready",
+        latestSummaryCompleteness: "complete",
+        hasActiveDegradations: false,
+        currentSummaryArtifactId: "artifact-1",
+        activeBackfillRunId: null,
+        summaryArtifact: {
+          id: "artifact-1",
+          summaryKind: "backfill_rollup",
+          generationMode: "llm",
+          completenessStatus: "complete",
+          summary: "Deployment risk is centered on one release blocker.",
+          keyDecisions: ["legacy decision"],
+          summaryFacts: [
+            {
+              kind: "decision",
+              text: "Alice will pause the rollout until the API timeout is fixed.",
+              evidence: [
+                {
+                  messageTs: "1710000000.000100",
+                  threadTs: "1710000000.000100",
+                  excerpt: "Alice said to pause the rollout until the API timeout is fixed.",
+                },
+              ],
+            },
+          ],
+          degradedReasons: [],
+          coverageStartTs: "1710000000.000100",
+          coverageEndTs: "1710000100.000200",
+          candidateMessageCount: 12,
+          includedMessageCount: 12,
+          artifactVersion: 2,
+          sourceRunId: null,
+          createdAt: new Date("2026-03-26T12:00:00.000Z"),
+          updatedAt: new Date("2026-03-26T12:05:00.000Z"),
+        },
+        backfillRun: null,
+        degradationSignals: [],
+      });
+
+      const res = await request(createApp()).get("/api/channels/C123ABC/state");
+
+      expect(res.status).toBe(200);
+      expect(res.body.keyDecisions).toHaveLength(1);
+      expect(res.body.keyDecisions[0]).toEqual(
+        expect.objectContaining({
+          text: "Alice will pause the rollout until the API timeout is fixed.",
+          ts: "1710000000.000100",
+          messageTs: "1710000000.000100",
+          threadTs: "1710000000.000100",
+          evidence: [
+            {
+              messageTs: "1710000000.000100",
+              threadTs: "1710000000.000100",
+              excerpt: "Alice said to pause the rollout until the API timeout is fixed.",
+            },
+          ],
+        }),
+      );
+      expect(typeof res.body.keyDecisions[0].detectedAt).toBe("string");
+      expect(res.body.summaryArtifact.summaryFacts).toHaveLength(1);
+    });
+
+    it("adds latest meeting context and combined drivers to the state payload", async () => {
+      vi.mocked(db.getChannel).mockResolvedValue({
+        id: "uuid-1",
+        workspace_id: "default",
+        channel_id: "C123ABC",
+        name: "sage_team",
+        conversation_type: "public_channel",
+        status: "ready",
+        initialized_at: new Date(),
+        last_event_at: new Date(),
+        created_at: new Date(),
+        updated_at: new Date(),
+      });
+      vi.mocked(db.getChannelState).mockResolvedValue(makeChannelState());
+      vi.mocked(db.getMessageCount).mockResolvedValue(42);
+      vi.mocked(db.getMessageCountInWindow).mockResolvedValue(14);
+      vi.mocked(db.getChannelParticipantCounts).mockResolvedValue([]);
+      vi.mocked(db.getChannelHealthCounts).mockResolvedValue([
+        makeHealthCounts({
+          total_message_count: "14",
+          total_analyzed_count: "8",
+          joy_count: "2",
+          neutral_count: "3",
+          anger_count: "2",
+          sadness_count: "1",
+          decision_signal_count: "1",
+        }),
+      ]);
+      vi.mocked(db.getMeetingObligationCounts).mockResolvedValue({
+        openCount: 2,
+        overdueCount: 1,
+      } as never);
+      vi.mocked(db.getRecentChannelActivityMetrics).mockResolvedValue({
+        windowHours: 24,
+        messageCount: 12,
+        activeThreads: 3,
+        openFollowUps: 1,
+        resolvedFollowUps: 1,
+      } as never);
+      vi.mocked(db.listMeetingsForChannel).mockResolvedValue([
+        makeMeeting(),
+      ] as never);
+      vi.mocked(db.getMeetingObligations).mockResolvedValue([
+        makeMeetingObligation(),
+        makeMeetingObligation({
+          id: "obligation-2",
+          obligation_type: "decision",
+          title: "Move to weekly delivery reviews",
+          status: "completed",
+          dedupe_key: "decision|move to weekly delivery reviews||",
+        }),
+        makeMeetingObligation({
+          id: "obligation-3",
+          obligation_type: "next_step",
+          title: "Share revised delivery timeline",
+          owner_name: "Alice",
+          due_date: "2026-03-24",
+          dedupe_key: "next_step|share revised delivery timeline|alice|2026-03-24",
+        }),
+      ] as never);
+
+      const res = await request(createApp()).get("/api/channels/C123ABC/state");
+
+      expect(res.status).toBe(200);
+      expect(res.body.meetingContext).toMatchObject({
+        latestMeeting: {
+          title: "Weekly Client Sync",
+          meetingSentiment: "concerned",
+          openObligations: 2,
+          overdueObligations: 1,
+          blockers: ["Timeline risk remains open."],
+          decisions: ["Move to weekly delivery reviews"],
+          nextSteps: ["Alice: Share revised delivery timeline (due Mar 24)"],
+        },
+      });
+      expect(res.body.unifiedDrivers).toEqual(
+        expect.arrayContaining([
+          {
+            level: "critical",
+            source: "combined",
+            message: "2 meeting commitments remain open, including 1 overdue.",
+          },
+          {
+            level: "warning",
+            source: "combined",
+            message: "Latest meeting sentiment was concerned.",
+          },
+          {
+            level: "warning",
+            source: "combined",
+            message: "Latest meeting highlighted blocker: Timeline risk remains open.",
+          },
+        ]),
+      );
+    });
+
     it("prefers live derived coverage counts over stale persisted channel state counts", async () => {
       vi.mocked(db.getChannel).mockResolvedValue({
         id: "uuid-1",
@@ -515,8 +856,9 @@ describe("Channel Routes", () => {
         }),
       );
       vi.mocked(db.getMessageCount).mockResolvedValue(594);
+      vi.mocked(db.getMessageCountInWindow).mockResolvedValue(94);
       vi.mocked(db.getChannelParticipantCounts).mockResolvedValue([]);
-      vi.mocked(db.getThreads).mockResolvedValue([]);
+      vi.mocked(db.getActiveThreadsSinceTs).mockResolvedValue([]);
       vi.mocked(db.getUserProfiles).mockResolvedValue([]);
       vi.mocked(db.getChannelHealthCounts).mockResolvedValue([
         makeHealthCounts({
@@ -603,10 +945,11 @@ describe("Channel Routes", () => {
           }),
         );
       vi.mocked(db.getMessageCount).mockResolvedValue(44);
+      vi.mocked(db.getMessageCountInWindow).mockResolvedValue(8);
       vi.mocked(db.getChannelParticipantCounts).mockResolvedValue([
         { user_id: "U1", message_count: 44 },
       ]);
-      vi.mocked(db.getThreads).mockResolvedValue([]);
+      vi.mocked(db.getActiveThreadsSinceTs).mockResolvedValue([]);
       vi.mocked(db.getUserProfiles).mockResolvedValue([]);
       vi.mocked(db.getChannelHealthCounts)
         .mockResolvedValueOnce([
@@ -678,8 +1021,9 @@ describe("Channel Routes", () => {
           }),
         );
       vi.mocked(db.getMessageCount).mockResolvedValue(594);
+      vi.mocked(db.getMessageCountInWindow).mockResolvedValue(94);
       vi.mocked(db.getChannelParticipantCounts).mockResolvedValue([]);
-      vi.mocked(db.getThreads).mockResolvedValue([]);
+      vi.mocked(db.getActiveThreadsSinceTs).mockResolvedValue([]);
       vi.mocked(db.getUserProfiles).mockResolvedValue([]);
       vi.mocked(db.getChannelHealthCounts)
         .mockResolvedValueOnce([
@@ -752,8 +1096,9 @@ describe("Channel Routes", () => {
         }),
       );
       vi.mocked(db.getMessageCount).mockResolvedValue(5);
+      vi.mocked(db.getMessageCountInWindow).mockResolvedValue(0);
       vi.mocked(db.getChannelParticipantCounts).mockResolvedValue([]);
-      vi.mocked(db.getThreads).mockResolvedValue([]);
+      vi.mocked(db.getActiveThreadsSinceTs).mockResolvedValue([]);
       vi.mocked(db.getUserProfiles).mockResolvedValue([]);
       vi.mocked(db.getChannelHealthCounts).mockResolvedValue([]);
 
@@ -806,7 +1151,7 @@ describe("Channel Routes", () => {
         created_at: new Date(),
         updated_at: new Date(),
       });
-      vi.mocked(db.getActiveThreads).mockResolvedValue([
+      vi.mocked(db.getActiveThreadsSinceTs).mockResolvedValue([
         {
           thread_ts: "1710000000.000100",
           reply_count: 4,
@@ -1156,6 +1501,8 @@ describe("Channel Routes", () => {
         latestRollupAt: new Date(),
         totalMessages: 100,
         totalAnalyses: 10,
+        activeMessageCount: 14,
+        activeWindowDays: 7,
         sentimentSnapshot: { totalMessages: 100, highRiskCount: 2, updatedAt: "" },
       });
 

@@ -3,7 +3,7 @@ import { logger } from "../utils/logger.js";
 import { eventBus } from "./eventBus.js";
 import { getSlackClient } from "./slackClientFactory.js";
 import type { MessageAnalysis, ThreadAnalysis } from "./emotionAnalyzer.js";
-import type { UserRole } from "../types/database.js";
+import type { ChannelClassificationType, UserRole } from "../types/database.js";
 
 const alertLog = logger.child({ module: "alerting", severity: "alert" });
 
@@ -12,6 +12,8 @@ interface AlertContext {
   channelId: string;
   messageTs?: string;
   threadTs?: string;
+  /** Channel classification — used to adjust alert thresholds */
+  channelType?: ChannelClassificationType | null;
 }
 
 // ─── Sentiment Alert DM throttle ────────────────────────────────────────────
@@ -20,20 +22,143 @@ const ALERT_DM_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes per channel
 const ALERT_DM_AUTO_DELETE_MS = 20 * 60 * 1000; // auto-delete after 20 min
 const lastAlertDmAt = new Map<string, number>();
 
+// ─── Classification-aware threshold configuration ─────────────────────────
+// Per-channel-type alert behavior. Client channels are strict, internal relaxed, social disabled.
+type AlertSeverity = "info" | "warning" | "critical";
+
+interface ChannelAlertPolicy {
+  /** Whether sentiment alerts fire at all for this channel type */
+  sentimentAlertsEnabled: boolean;
+  /** Minimum confidence for anger alerts (higher = fewer false positives) */
+  angerConfidenceThreshold: number;
+  /** Minimum confidence for sarcasm alerts */
+  sarcasmConfidenceThreshold: number;
+  /** Severity boost: how alerts from this channel type should be classified */
+  escalationSeverity: AlertSeverity;
+  /** Whether deteriorating sentiment should alert */
+  deterioratingEnabled: boolean;
+  /** DM cooldown override in ms (longer for internal channels) */
+  dmCooldownMs: number;
+}
+
+const CHANNEL_ALERT_POLICIES: Record<string, ChannelAlertPolicy> = {
+  client_delivery: {
+    sentimentAlertsEnabled: true,
+    angerConfidenceThreshold: 0.75, // lower threshold = catch more (client matters)
+    sarcasmConfidenceThreshold: 0.70,
+    escalationSeverity: "critical",
+    deterioratingEnabled: true,
+    dmCooldownMs: 3 * 60 * 1000, // 3 min (urgent for client channels)
+  },
+  client_support: {
+    sentimentAlertsEnabled: true,
+    angerConfidenceThreshold: 0.70,
+    sarcasmConfidenceThreshold: 0.70,
+    escalationSeverity: "critical",
+    deterioratingEnabled: true,
+    dmCooldownMs: 3 * 60 * 1000,
+  },
+  internal_engineering: {
+    sentimentAlertsEnabled: true,
+    angerConfidenceThreshold: 0.90, // higher threshold = fewer alerts (internal banter is noisy)
+    sarcasmConfidenceThreshold: 0.90,
+    escalationSeverity: "warning",
+    deterioratingEnabled: true,
+    dmCooldownMs: 10 * 60 * 1000, // 10 min
+  },
+  internal_operations: {
+    sentimentAlertsEnabled: true,
+    angerConfidenceThreshold: 0.90,
+    sarcasmConfidenceThreshold: 0.90,
+    escalationSeverity: "warning",
+    deterioratingEnabled: true,
+    dmCooldownMs: 10 * 60 * 1000,
+  },
+  internal_social: {
+    sentimentAlertsEnabled: false, // disable alerts for #general, #random
+    angerConfidenceThreshold: 1.0,
+    sarcasmConfidenceThreshold: 1.0,
+    escalationSeverity: "info",
+    deterioratingEnabled: false,
+    dmCooldownMs: 30 * 60 * 1000,
+  },
+  automated: {
+    sentimentAlertsEnabled: false, // bot channels don't need sentiment alerts
+    angerConfidenceThreshold: 1.0,
+    sarcasmConfidenceThreshold: 1.0,
+    escalationSeverity: "info",
+    deterioratingEnabled: false,
+    dmCooldownMs: 60 * 60 * 1000,
+  },
+};
+
+const DEFAULT_ALERT_POLICY: ChannelAlertPolicy = {
+  sentimentAlertsEnabled: true,
+  angerConfidenceThreshold: 0.85,
+  sarcasmConfidenceThreshold: 0.80,
+  escalationSeverity: "warning",
+  deterioratingEnabled: true,
+  dmCooldownMs: ALERT_DM_COOLDOWN_MS,
+};
+
+function getAlertPolicy(channelType?: ChannelClassificationType | null): ChannelAlertPolicy {
+  if (channelType && channelType in CHANNEL_ALERT_POLICIES) {
+    return CHANNEL_ALERT_POLICIES[channelType];
+  }
+  return DEFAULT_ALERT_POLICY;
+}
+
+// ─── Alert deduplication ────────────────────────────────────────────────────
+// Prevent the same alert type from firing for the same channel within a window.
+const ALERT_DEDUP_WINDOW_MS = 10 * 60 * 1000; // 10 min
+const recentAlerts = new Map<string, number>();
+
+function isDuplicateAlert(workspaceId: string, channelId: string, alertType: string): boolean {
+  const key = `${workspaceId}:${channelId}:${alertType}`;
+  const lastFired = recentAlerts.get(key);
+  if (lastFired && Date.now() - lastFired < ALERT_DEDUP_WINDOW_MS) {
+    return true;
+  }
+  recentAlerts.set(key, Date.now());
+  // Prune old entries when map grows beyond reasonable bounds
+  if (recentAlerts.size > 200) {
+    const cutoff = Date.now() - ALERT_DEDUP_WINDOW_MS;
+    for (const [k, v] of recentAlerts) {
+      if (v < cutoff) recentAlerts.delete(k);
+    }
+  }
+  return false;
+}
+
 /**
  * Checks analysis results against alert thresholds and emits structured log events.
- * MVP: alerts are structured pino log entries; future phases can add Slack/webhook delivery.
+ * Classification-aware: thresholds vary by channel type (client = strict, social = disabled).
  */
 export function checkAndAlert(
   analysis: MessageAnalysis | ThreadAnalysis,
   context: AlertContext,
 ): void {
+  const policy = getAlertPolicy(context.channelType);
+
+  // Short-circuit: alerts disabled for this channel type
+  if (!policy.sentimentAlertsEnabled) {
+    return;
+  }
+
   const interactionTone = analysis.interaction_tone ?? "neutral";
 
-  const fireAlert = (alertType: string, extra: Record<string, unknown>) => {
-    alertLog.warn({ alertType, ...context, ...extra }, `Alert: ${alertType}`);
+  const fireAlert = (alertType: string, severity: AlertSeverity, extra: Record<string, unknown>) => {
+    // Deduplicate: same alert type + channel within window
+    if (isDuplicateAlert(context.workspaceId, context.channelId, alertType)) {
+      alertLog.debug({ alertType, channelId: context.channelId }, "Alert deduplicated (recent duplicate)");
+      return;
+    }
+
+    alertLog.warn({ alertType, severity, channelType: context.channelType, ...context, ...extra }, `Alert: ${alertType}`);
     eventBus.createAndPublish("alert_triggered", context.workspaceId, context.channelId, {
       alertType,
+      severity,
+      channelType: context.channelType ?? "unclassified",
       changeType: "created",
       sourceMessageTs: context.messageTs ?? null,
       threadTs: context.threadTs ?? null,
@@ -43,7 +168,7 @@ export function checkAndAlert(
 
   // Alert 1: High escalation risk
   if (analysis.escalation_risk === "high") {
-    fireAlert("high_escalation_risk", {
+    fireAlert("high_escalation_risk", policy.escalationSeverity, {
       emotion: analysis.dominant_emotion,
       interactionTone,
       confidence: analysis.confidence,
@@ -51,26 +176,26 @@ export function checkAndAlert(
     });
   }
 
-  // Alert 2: High-confidence anger
+  // Alert 2: High-confidence anger (threshold varies by channel type)
   if (
     analysis.dominant_emotion === "anger" &&
-    analysis.confidence > 0.85 &&
+    analysis.confidence > policy.angerConfidenceThreshold &&
     interactionTone !== "corrective"
   ) {
-    fireAlert("high_confidence_anger", {
+    fireAlert("high_confidence_anger", policy.escalationSeverity, {
       interactionTone,
       confidence: analysis.confidence,
       explanation: analysis.explanation,
     });
   }
 
-  // Alert 3: Sarcasm masking anger — surface tone hides real frustration
+  // Alert 3: Sarcasm masking anger (threshold varies by channel type)
   if (
     analysis.sarcasm_detected &&
     analysis.intended_emotion === "anger" &&
-    analysis.confidence > 0.8
+    analysis.confidence > policy.sarcasmConfidenceThreshold
   ) {
-    fireAlert("sarcasm_masked_anger", {
+    fireAlert("sarcasm_masked_anger", policy.escalationSeverity, {
       surfaceEmotion: analysis.dominant_emotion,
       intendedEmotion: analysis.intended_emotion,
       interactionTone,
@@ -79,9 +204,13 @@ export function checkAndAlert(
     });
   }
 
-  // Alert 4: Deteriorating thread sentiment (thread analysis only)
-  if ("sentiment_trajectory" in analysis && analysis.sentiment_trajectory === "deteriorating") {
-    fireAlert("deteriorating_sentiment", {
+  // Alert 4: Deteriorating thread sentiment
+  if (
+    policy.deterioratingEnabled &&
+    "sentiment_trajectory" in analysis &&
+    analysis.sentiment_trajectory === "deteriorating"
+  ) {
+    fireAlert("deteriorating_sentiment", policy.escalationSeverity, {
       threadSentiment: analysis.thread_sentiment,
       summary: analysis.summary,
     });
@@ -145,12 +274,16 @@ export async function sendSentimentAlertDMs(
   alertType: string,
   extra: { explanation?: string; emotion?: string; confidence?: number },
 ): Promise<void> {
-  const { workspaceId, channelId } = context;
+  const { workspaceId, channelId, channelType } = context;
   const throttleKey = `${workspaceId}:${channelId}`;
+  const policy = getAlertPolicy(channelType);
 
-  // Per-channel cooldown
+  // Suppress DMs for channels with alerts disabled
+  if (!policy.sentimentAlertsEnabled) return;
+
+  // Per-channel cooldown (varies by channel type)
   const lastSent = lastAlertDmAt.get(throttleKey);
-  if (lastSent && Date.now() - lastSent < ALERT_DM_COOLDOWN_MS) {
+  if (lastSent && Date.now() - lastSent < policy.dmCooldownMs) {
     alertLog.debug({ channelId, alertType }, "Sentiment alert DM skipped (cooldown)");
     return;
   }
@@ -227,8 +360,8 @@ export async function sendSentimentAlertDMs(
             try {
               const client = await getSlackClient(workspaceId);
               await client.deleteMessage(dmChannelId, result.ts!);
-            } catch {
-              // Best-effort deletion
+            } catch (err) {
+              logger.debug({ err: err instanceof Error ? err.message : "unknown", dmChannelId }, "Auto-delete DM failed (best-effort)");
             }
           }, ALERT_DM_AUTO_DELETE_MS).unref();
         }

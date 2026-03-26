@@ -12,7 +12,6 @@ import type { FollowUpSeriousness, UserRole } from "../types/database.js";
 const log = logger.child({ service: "followUpSweep" });
 
 let timer: NodeJS.Timeout | null = null;
-let sweepInProgress = false;
 const FOLLOW_UP_SWEEP_LOCK_NAMESPACE = 73141;
 const FOLLOW_UP_SWEEP_LOCK_ID = 1;
 
@@ -157,18 +156,13 @@ export function shouldQuietlyConclude(
 // ─── Main sweep ──────────────────────────────────────────────────────────────
 
 async function runSweep(): Promise<void> {
-  // Concurrency guard — prevent overlapping sweeps from sending duplicates
-  if (sweepInProgress) {
-    log.debug("Sweep already in progress, skipping");
-    return;
-  }
-  sweepInProgress = true;
+  // Rely on DB advisory lock only — local flag caused deadlocks on lock-acquire failure
   let advisoryLockAcquired = false;
 
   try {
     advisoryLockAcquired = await tryAcquireSweepLock();
     if (!advisoryLockAcquired) {
-      log.debug("Sweep already running on another instance, skipping");
+      log.debug("Sweep already running (advisory lock held), skipping");
       return;
     }
 
@@ -242,8 +236,10 @@ async function runSweep(): Promise<void> {
     const eligibleItems = dueItems.filter((item) => {
       if (!item.last_alerted_at) return true;
       const alertCount = item.alert_count ?? 0;
-      const escalationFactor = Math.pow(2, Math.floor(alertCount / 3));
-      const effectiveThreshold = baseRepeatMs * Math.min(escalationFactor, 8);
+      const ESCALATION_COHORT_SIZE = 3;
+      const MAX_ESCALATION_FACTOR = 8;
+      const escalationFactor = Math.pow(2, Math.floor(alertCount / ESCALATION_COHORT_SIZE));
+      const effectiveThreshold = baseRepeatMs * Math.min(escalationFactor, MAX_ESCALATION_FACTOR);
       const elapsed = now - new Date(item.last_alerted_at).getTime();
       return elapsed >= effectiveThreshold;
     });
@@ -429,25 +425,41 @@ async function runSweep(): Promise<void> {
 
       // Build the DM message using Block Kit for reliable notifications
       const channelName = item.channel_name ?? item.channel_id;
-      const notificationText = `Follow-up reminder: ${scored.summary}`;
-      const dmBlocks = [
+      const isMeetingOrigin = item.detection_mode === "meeting";
+      const meetingLabel = isMeetingOrigin ? "📞 Meeting commitment" : "Follow-up reminder";
+      const notificationText = `${meetingLabel}: ${scored.summary}`;
+      const dmBlocks: unknown[] = [
         {
           type: "section",
           text: {
             type: "mrkdwn",
-            text: `*Follow-up reminder* from *#${channelName}*\n${scored.summary}`,
+            text: `*${meetingLabel}* from *#${channelName}*\n${scored.summary}`,
           },
         },
-        {
+      ];
+
+      // Add meeting context if this originated from a meeting obligation
+      if (isMeetingOrigin && (item as unknown as Record<string, unknown>).meeting_obligation_id) {
+        dmBlocks.push({
           type: "context",
           elements: [
             {
               type: "mrkdwn",
-              text: `_Nudge ${(item.alert_count ?? 0) + 1} · This message will be replaced on the next check._`,
+              text: `_This was committed during a recorded meeting. Track progress in #${channelName}._`,
             },
           ],
-        },
-      ];
+        });
+      }
+
+      dmBlocks.push({
+        type: "context",
+        elements: [
+          {
+            type: "mrkdwn",
+            text: `_Nudge ${(item.alert_count ?? 0) + 1} · This message will be replaced on the next check._`,
+          },
+        ],
+      });
 
       // Send personal DMs to each target user
       const newDmRefs: DmRef[] = [];
@@ -513,7 +525,6 @@ async function runSweep(): Promise<void> {
       log.debug({ processed: eligibleItems.length }, "Processed follow-up reminders");
     }
   } finally {
-    sweepInProgress = false;
     if (advisoryLockAcquired) {
       try {
         await releaseSweepLock();

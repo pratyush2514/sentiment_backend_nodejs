@@ -10,6 +10,10 @@ import { isIngestibleHistoryMessage } from "../types/slack.js";
 import { logger } from "../utils/logger.js";
 import { allowsAutomatedMessageIngestion } from "./channelMessagePolicy.js";
 import { getSlackClient } from "./slackClientFactory.js";
+import {
+  extractSlackMessageText,
+  mapSlackFiles,
+} from "./slackMessageContent.js";
 import { extractLinks } from "./textNormalizer.js";
 import type { ChannelRow } from "../types/database.js";
 
@@ -28,11 +32,15 @@ function getJitteredInterval(): number {
  * Start the periodic thread reconciliation loop.
  * Runs every ~5 minutes (with jitter) and enqueues thread.reconcile jobs for all ready channels.
  */
+let stopped = true;
+
 export function startReconcileLoop(): void {
   if (reconcileTimer) {
     log.warn("Reconcile loop already running");
     return;
   }
+
+  stopped = false;
 
   log.info(
     { baseIntervalMs: BASE_INTERVAL_MS, jitterMs: JITTER_MS },
@@ -43,6 +51,7 @@ export function startReconcileLoop(): void {
 }
 
 function scheduleNext(): void {
+  if (stopped) return;
   const interval = getJitteredInterval();
   reconcileTimer = setTimeout(() => {
     enqueueReconcileForActiveChannels()
@@ -51,7 +60,7 @@ function scheduleNext(): void {
         log.error({ error: errMsg }, "Reconcile loop iteration failed");
       })
       .finally(() => {
-        if (reconcileTimer !== null) {
+        if (!stopped) {
           scheduleNext();
         }
       });
@@ -62,6 +71,7 @@ function scheduleNext(): void {
  * Stop the periodic reconciliation loop.
  */
 export function stopReconcileLoop(): void {
+  stopped = true;
   if (reconcileTimer) {
     clearTimeout(reconcileTimer);
     reconcileTimer = null;
@@ -80,9 +90,23 @@ async function enqueueReconcileForActiveChannels(): Promise<void> {
     return;
   }
 
-  log.info({ channelCount: channels.length }, "Enqueuing thread reconcile jobs");
+  // Filter to channels that haven't been reconciled in the last 4 minutes
+  // (the reconcile loop runs every 5 min, so this prevents double-enqueue)
+  const RECONCILE_COOLDOWN_MS = 4 * 60 * 1000;
+  const now = Date.now();
+  const eligible = channels.filter((ch) => {
+    const lastReconcile = ch.last_reconcile_at ? new Date(ch.last_reconcile_at).getTime() : 0;
+    return now - lastReconcile > RECONCILE_COOLDOWN_MS;
+  });
 
-  for (const channel of channels) {
+  if (eligible.length === 0) {
+    log.debug("All ready channels recently reconciled, skipping");
+    return;
+  }
+
+  log.info({ channelCount: eligible.length }, "Enqueuing thread reconcile jobs");
+
+  for (const channel of eligible) {
     try {
       await enqueueThreadReconcile(channel.workspace_id, channel.channel_id);
     } catch (err) {
@@ -200,26 +224,20 @@ async function reconcileRecentChannelHistory(
           continue;
         }
 
-        const files = message.files?.map((file) => ({
-          name: file.name,
-          title: file.title,
-          mimetype: file.mimetype,
-          filetype: file.filetype,
-          size: file.size,
-          permalink: file.permalink,
-        }));
+        const files = mapSlackFiles(message.files);
+        const extractedText = extractSlackMessageText(message);
 
         await enqueueMessageIngest({
           workspaceId: channel.workspace_id,
           channelId: channel.channel_id,
           ts: message.ts,
           userId: message.user,
-          text: message.text ?? "",
+          text: extractedText,
           threadTs: message.thread_ts ?? null,
           eventId: `reconcile:${channel.channel_id}:${message.ts}`,
           ...(message.subtype ? { subtype: message.subtype } : {}),
           ...(message.bot_id ? { botId: message.bot_id } : {}),
-          files: files && files.length > 0 ? files : undefined,
+          files: files ?? undefined,
         });
 
         existingTs.add(message.ts);
@@ -275,26 +293,20 @@ async function reconcileSingleThread(
         isIngestibleHistoryMessage(message, { allowAutomatedMessages }) &&
         message.ts !== threadTs
       ) {
-        const filesMeta = message.files?.map((f) => ({
-          name: f.name,
-          title: f.title,
-          mimetype: f.mimetype,
-          filetype: f.filetype,
-          size: f.size,
-          permalink: f.permalink,
-        })) ?? null;
-        const linksMeta = extractLinks(message.text ?? "");
+        const filesMeta = mapSlackFiles(message.files);
+        const extractedText = extractSlackMessageText(message);
+        const linksMeta = extractLinks(extractedText);
         const result = await db.upsertMessage(
           workspaceId,
           channelId,
           message.ts,
           message.user,
-          message.text ?? "",
+          extractedText,
           "backfill",
           message.thread_ts ?? threadTs,
           message.subtype,
           message.bot_id,
-          filesMeta && filesMeta.length > 0 ? filesMeta : null,
+          filesMeta,
           linksMeta.length > 0 ? linksMeta : null,
         );
 

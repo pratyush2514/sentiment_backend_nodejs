@@ -92,6 +92,7 @@ vi.mock("../../src/db/queries.js", () => ({
   incrementMessageCounters: vi.fn(),
   updateNormalizedText: vi.fn(),
   getChannel: vi.fn().mockResolvedValue({ status: "ready" }),
+  getChannelClassification: vi.fn().mockResolvedValue(null),
   getChannelState: vi.fn().mockResolvedValue(makeChannelState()),
   getChannelHealthCounts: vi.fn().mockResolvedValue([
     {
@@ -142,6 +143,7 @@ vi.mock("../../src/db/queries.js", () => ({
       analysis_status: "pending", created_at: new Date(), updated_at: new Date(),
     },
   ]),
+  upsertMessageIntelligenceState: vi.fn().mockResolvedValue(undefined),
   updateMessageAnalysisStatus: vi.fn(),
   insertMessageAnalytics: vi.fn((data) => storedAnalytics.push(data)),
   insertLLMCost: vi.fn((data) => storedCosts.push(data)),

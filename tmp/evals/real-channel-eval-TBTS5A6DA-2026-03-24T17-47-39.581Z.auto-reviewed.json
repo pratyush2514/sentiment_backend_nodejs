@@ -1,0 +1,4741 @@
+{
+  "generatedAt": "2026-03-24T17:47:43.918Z",
+  "warning": "This export contains real workspace data and blank human-review fields. It is a real eval source, but not real ground-truth until a human reviewer labels each case.",
+  "workspace": {
+    "workspaceId": "TBTS5A6DA",
+    "teamName": "Wednesday"
+  },
+  "windowPolicy": {
+    "defaultScope": "active",
+    "activeWindowDays": 7,
+    "archiveWindowDays": 30,
+    "liveWindowHours": 24
+  },
+  "reviewRubric": {
+    "expectedHealthValues": [
+      "healthy",
+      "attention",
+      "at-risk"
+    ],
+    "expectedSignalValues": [
+      "stable",
+      "elevated",
+      "escalating"
+    ],
+    "summaryFairnessValues": [
+      "fair",
+      "mixed",
+      "overstated",
+      "understated",
+      "unsupported"
+    ],
+    "shouldBeRedDefinition": "Set shouldBeRed=true only if a human reviewer believes the user-facing red/at-risk/escalating treatment would feel fair for this recent-window snapshot."
+  },
+  "cases": [
+    {
+      "caseId": "01-sage-team-C08V66T6XQC",
+      "workspaceId": "TBTS5A6DA",
+      "channelId": "C08V66T6XQC",
+      "channelName": "sage_team",
+      "conversationType": "private_channel",
+      "channelStatus": "ready",
+      "lastEventAt": "2026-03-24T13:49:52.882Z",
+      "windowPolicy": {
+        "defaultScope": "active",
+        "activeWindowDays": 7,
+        "archiveWindowDays": 30,
+        "liveWindowHours": 24
+      },
+      "currentSystemAssessment": {
+        "persisted": {
+          "signal": "elevated",
+          "health": "attention",
+          "confidence": 0.66,
+          "evidenceTier": "confirmed",
+          "effectiveChannelMode": "collaboration",
+          "riskDrivers": [
+            {
+              "key": "high_severity_alerts",
+              "label": "Open high-severity alerts",
+              "message": "2 high-severity alerts remain unresolved.",
+              "category": "alert",
+              "severity": "high"
+            },
+            {
+              "key": "risky_threads",
+              "label": "Risky surfaced threads",
+              "message": "1 surfaced thread carries medium or high operational risk.",
+              "category": "thread",
+              "severity": "medium"
+            },
+            {
+              "key": "human_risk_signals",
+              "label": "Human risk signals",
+              "message": "2 recent conversation signals suggest blocker, escalation, or meaningful tension.",
+              "category": "human",
+              "severity": "medium"
+            }
+          ],
+          "attentionSummary": {
+            "title": "Attention required",
+            "status": "action",
+            "message": "2 high-severity alerts remain unresolved.",
+            "driverKeys": [
+              "high_severity_alerts",
+              "risky_threads",
+              "human_risk_signals"
+            ]
+          },
+          "messageDispositionCounts": {
+            "inFlight": 0,
+            "contextOnly": 62,
+            "totalInWindow": 70,
+            "deepAiAnalyzed": 0,
+            "routineAcknowledgments": 8,
+            "heuristicIncidentSignals": 0,
+            "storedWithoutDeepAnalysis": 70
+          },
+          "latestSummaryCompleteness": "complete",
+          "hasActiveDegradations": false,
+          "activeDegradationCount": 0
+        },
+        "recomputedFromCounts": {
+          "healthCounts": {
+            "analysisWindowDays": 7,
+            "openAlertCount": 2,
+            "highSeverityAlertCount": 2,
+            "automationIncidentCount": 0,
+            "criticalAutomationIncidentCount": 0,
+            "automationIncident24hCount": 0,
+            "criticalAutomationIncident24hCount": 0,
+            "humanRiskSignalCount": 2,
+            "requestSignalCount": 0,
+            "decisionSignalCount": 0,
+            "resolutionSignalCount": 0,
+            "flaggedMessageCount": 0,
+            "highRiskMessageCount": 0,
+            "attentionThreadCount": 1,
+            "blockedThreadCount": 0,
+            "escalatedThreadCount": 0,
+            "riskyThreadCount": 1,
+            "totalMessageCount": 70,
+            "skippedMessageCount": 70,
+            "contextOnlyMessageCount": 60,
+            "ignoredMessageCount": 8,
+            "inflightMessageCount": 0,
+            "openMeetingObligationCount": 0,
+            "overdueMeetingObligationCount": 0
+          },
+          "sentimentSnapshot": {
+            "totalAnalyzed": 0,
+            "highRiskCount": 0,
+            "emotionDistribution": {
+              "anger": 0,
+              "disgust": 0,
+              "fear": 0,
+              "joy": 0,
+              "neutral": 0,
+              "sadness": 0,
+              "surprise": 0
+            }
+          },
+          "signal": "elevated",
+          "health": "attention",
+          "signalConfidence": 0.66,
+          "signalEvidenceTier": "confirmed",
+          "negativeRatio": 0,
+          "effectiveChannelMode": "collaboration",
+          "riskDrivers": [
+            {
+              "key": "high_severity_alerts",
+              "label": "Open high-severity alerts",
+              "message": "2 high-severity alerts remain unresolved.",
+              "severity": "high",
+              "category": "alert"
+            },
+            {
+              "key": "risky_threads",
+              "label": "Risky surfaced threads",
+              "message": "1 surfaced thread carries medium or high operational risk.",
+              "severity": "medium",
+              "category": "thread"
+            },
+            {
+              "key": "human_risk_signals",
+              "label": "Human risk signals",
+              "message": "2 recent conversation signals suggest blocker, escalation, or meaningful tension.",
+              "severity": "medium",
+              "category": "human"
+            }
+          ],
+          "attentionSummary": {
+            "status": "action",
+            "title": "Attention required",
+            "message": "2 high-severity alerts remain unresolved.",
+            "driverKeys": [
+              "high_severity_alerts",
+              "risky_threads",
+              "human_risk_signals"
+            ]
+          },
+          "messageDispositionCounts": {
+            "totalInWindow": 70,
+            "deepAiAnalyzed": 0,
+            "heuristicIncidentSignals": 0,
+            "contextOnly": 62,
+            "routineAcknowledgments": 8,
+            "storedWithoutDeepAnalysis": 70,
+            "inFlight": 0
+          }
+        },
+        "differsFromPersisted": false
+      },
+      "classification": {
+        "channelType": "internal_engineering",
+        "confidence": 0.9,
+        "source": "llm",
+        "clientName": null,
+        "topics": [
+          "script generation",
+          "bug fixes",
+          "AI video editing",
+          "sprint updates",
+          "team coordination"
+        ],
+        "reasoning": "The channel discusses technical issues related to script generation and bug fixes, with no references to external clients, indicating it is an internal engineering channel."
+      },
+      "truthDiagnostics": {
+        "ingestReadiness": "ready",
+        "intelligenceReadiness": "ready",
+        "messageCounts": {
+          "total": 324,
+          "eligible": 0,
+          "pending": 0,
+          "processing": 0,
+          "completed": 0,
+          "failed": 0,
+          "suppressed": 324,
+          "partial": 0
+        },
+        "summaryArtifact": {
+          "id": "68925cb1-86b4-43ca-b505-992f80e69b03",
+          "workspace_id": "TBTS5A6DA",
+          "channel_id": "C08V66T6XQC",
+          "summary_kind": "channel_rollup",
+          "generation_mode": "llm",
+          "completeness_status": "complete",
+          "summary": "Recent conversation focused on Deployment of dev lambda and testing. Decisions and next steps: Approve and deploy dev lambda, then test before production deployment.",
+          "key_decisions_json": [
+            "Sidd will update the team on the script generator's status once it's live and working.",
+            "The team will wait for the design audit of the UIUX of the Pinterest feature before proceeding.",
+            "Approve and deploy dev lambda, then test before production deployment"
+          ],
+          "degraded_reasons_json": [],
+          "coverage_start_ts": "1773812495.642489",
+          "coverage_end_ts": "1774358933.485769",
+          "candidate_message_count": 1,
+          "included_message_count": 1,
+          "artifact_version": 1,
+          "source_run_id": null,
+          "superseded_at": null,
+          "superseded_by_artifact_id": null,
+          "created_at": "2026-03-24T13:50:11.207Z",
+          "updated_at": "2026-03-24T13:50:11.207Z"
+        },
+        "backfillRun": null,
+        "activeDegradationEvents": []
+      },
+      "summaryContext": {
+        "runningSummary": "Recent conversation focused on Deployment of dev lambda and testing. Decisions and next steps: Approve and deploy dev lambda, then test before production deployment.",
+        "keyDecisions": [
+          "Sidd will update the team on the script generator's status once it's live and working.",
+          "The team will wait for the design audit of the UIUX of the Pinterest feature before proceeding.",
+          "Approve and deploy dev lambda, then test before production deployment"
+        ],
+        "totalRollups": 5,
+        "latestRollupAt": "2026-03-24T13:50:13.131Z",
+        "totalMessages": 453,
+        "totalAnalyses": 0,
+        "activeMessageCount": 70,
+        "activeWindowDays": 7,
+        "sentimentSnapshot": {
+          "updatedAt": "2026-03-24T13:07:59.599Z",
+          "highRiskCount": 0,
+          "totalMessages": 452,
+          "emotionDistribution": {
+            "joy": 0,
+            "fear": 0,
+            "anger": 0,
+            "disgust": 0,
+            "neutral": 0,
+            "sadness": 0,
+            "surprise": 0
+          }
+        }
+      },
+      "rawHealthCounts": {
+        "analysisWindowDays": 7,
+        "openAlertCount": 2,
+        "highSeverityAlertCount": 2,
+        "automationIncidentCount": 0,
+        "criticalAutomationIncidentCount": 0,
+        "automationIncident24hCount": 0,
+        "criticalAutomationIncident24hCount": 0,
+        "humanRiskSignalCount": 2,
+        "requestSignalCount": 0,
+        "decisionSignalCount": 0,
+        "resolutionSignalCount": 0,
+        "flaggedMessageCount": 0,
+        "highRiskMessageCount": 0,
+        "attentionThreadCount": 1,
+        "blockedThreadCount": 0,
+        "escalatedThreadCount": 0,
+        "riskyThreadCount": 1,
+        "totalMessageCount": 70,
+        "skippedMessageCount": 70,
+        "contextOnlyMessageCount": 60,
+        "ignoredMessageCount": 8,
+        "inflightMessageCount": 0,
+        "totalAnalyzedCount": 0,
+        "angerCount": 0,
+        "disgustCount": 0,
+        "fearCount": 0,
+        "joyCount": 0,
+        "neutralCount": 0,
+        "sadnessCount": 0,
+        "surpriseCount": 0
+      },
+      "activeThreads": [
+        {
+          "threadTs": "1774353453.949839",
+          "replyCount": 3,
+          "lastActivity": "2026-03-24T12:10:53.249Z"
+        },
+        {
+          "threadTs": "1774334231.168259",
+          "replyCount": 1,
+          "lastActivity": "2026-03-24T07:17:20.195Z"
+        },
+        {
+          "threadTs": "1774334198.714639",
+          "replyCount": 1,
+          "lastActivity": "2026-03-24T07:16:29.642Z"
+        },
+        {
+          "threadTs": "1774334336.162099",
+          "replyCount": 1,
+          "lastActivity": "2026-03-24T06:55:36.689Z"
+        },
+        {
+          "threadTs": "1774282268.322949",
+          "replyCount": 2,
+          "lastActivity": "2026-03-23T17:50:32.563Z"
+        },
+        {
+          "threadTs": "1774246463.633989",
+          "replyCount": 1,
+          "lastActivity": "2026-03-23T06:50:04.168Z"
+        },
+        {
+          "threadTs": "1773993233.476999",
+          "replyCount": 2,
+          "lastActivity": "2026-03-20T12:40:54.440Z"
+        },
+        {
+          "threadTs": "1774009293.323079",
+          "replyCount": 2,
+          "lastActivity": "2026-03-20T12:36:17.739Z"
+        },
+        {
+          "threadTs": "1773921111.648629",
+          "replyCount": 2,
+          "lastActivity": "2026-03-20T05:56:18.349Z"
+        },
+        {
+          "threadTs": "1773904283.654619",
+          "replyCount": 6,
+          "lastActivity": "2026-03-19T09:32:59.291Z"
+        }
+      ],
+      "surfacedThreadInsights": [
+        {
+          "threadTs": "1774334198.714639",
+          "surfacePriority": "medium",
+          "threadState": "monitoring",
+          "emotionalTemperature": "calm",
+          "operationalRisk": "medium",
+          "primaryIssue": "delays in script generation and performance issues",
+          "summary": "The team is preparing for the next production release, with Shamoil confirming that the concierge service will be included. However, there are ongoing issues with script generation delays and a Supabase-related performance issue that need to be addressed.",
+          "openQuestions": [],
+          "lastMeaningfulChangeTs": "1774336589.642529"
+        }
+      ],
+      "topLevelMessages": [
+        {
+          "ts": "1773843194.248709",
+          "userId": "U0AF6HQ57PU",
+          "displayName": "Rushil",
+          "realName": "Rushil Jain",
+          "text": "<@U08U35F9DB9>",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1773848701.031639",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "<https://fathom.video/share/jpQE5q-66T6_tty_3gNktuBYykyy6Jdz>\n<!channel> good call, do watch, some sprint changes",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1773904283.654619",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "<@U06JZ30FN8Y> <@U0AF6HQ57PU> <https://docs.google.com/spreadsheets/d/1LJe-XxwSRHwuhYi0Xsp2tz9PcyIRaXrxBFItB2TxEQ4/edit?gid=1162632454#gid=1162632454>\ntake a look at the sprint plan lmk what u guys think, if the bandwidth allows, i have kept some room for our other works aswell, the required doc is linked below in the sheet for more input regarding features",
+          "replyCount": 5,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": [
+              "request"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1773904790.056989",
+          "userId": "U0AF6HQ57PU",
+          "displayName": "Rushil",
+          "realName": "Rushil Jain",
+          "text": "",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1773921111.648629",
+          "userId": "U06JZ30FN8Y",
+          "displayName": "Shamoil Attaar",
+          "realName": "Shamoil Attaar",
+          "text": "<@U0AF6HQ57PU>\nplease review:\n<https://github.com/wednesday-solutions/sage-n2/pull/777>\nthis is the sage concierge plan",
+          "replyCount": 1,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": [
+              "request"
+            ]
+          },
+          "followUp": {
+            "id": "29d9582b-e8ce-423d-a69a-696aae9d13a9",
+            "seriousness": "high",
+            "summary": "Shamoil Attaar is still waiting for a reply (27d 3h overdue).",
+            "dueAt": "2026-02-25T11:04:24.971Z",
+            "repeatedAskCount": 1
+          }
+        },
+        {
+          "ts": "1773985510.196209",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "On half day leave, will join in second half",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1773993233.476999",
+          "userId": "U06JZ30FN8Y",
+          "displayName": "Shamoil Attaar",
+          "realName": "Shamoil Attaar",
+          "text": "<@U0AF6HQ57PU>\n<https://github.com/wednesday-solutions/sage-n2/pull/778>\nPlease review",
+          "replyCount": 1,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": [
+              "request"
+            ]
+          },
+          "followUp": {
+            "id": "29d9582b-e8ce-423d-a69a-696aae9d13a9",
+            "seriousness": "high",
+            "summary": "Shamoil Attaar is still waiting for a reply (27d 3h overdue).",
+            "dueAt": "2026-02-25T11:04:24.971Z",
+            "repeatedAskCount": 1
+          }
+        },
+        {
+          "ts": "1774009293.323079",
+          "userId": "U0AF6HQ57PU",
+          "displayName": "Rushil",
+          "realName": "Rushil Jain",
+          "text": "<@U06JZ30FN8Y> Please review\n<https://github.com/wednesday-solutions/sage-n2/pulls>",
+          "replyCount": 1,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": [
+              "request"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774018318.785139",
+          "userId": "U06JZ30FN8Y",
+          "displayName": "Shamoil Attaar",
+          "realName": "Shamoil Attaar",
+          "text": "<@U08U35F9DB9>\nwe are live with concierge",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": "29d9582b-e8ce-423d-a69a-696aae9d13a9",
+            "seriousness": "high",
+            "summary": "Shamoil Attaar is still waiting for a reply (27d 3h overdue).",
+            "dueAt": "2026-02-25T11:04:24.971Z",
+            "repeatedAskCount": 1
+          }
+        },
+        {
+          "ts": "1774019793.149399",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "<https://fathom.video/share/a9e4kLDQCxiE9SE_uzP8mk6zGs-eS7xE>\n<!channel> good call team, thanks happy weekend",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774265408.729889",
+          "userId": "U0AF6HQ57PU",
+          "displayName": "Rushil",
+          "realName": "Rushil Jain",
+          "text": "<https://github.com/wednesday-solutions/sage-n2/pulls>",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774265415.082359",
+          "userId": "U0AF6HQ57PU",
+          "displayName": "Rushil",
+          "realName": "Rushil Jain",
+          "text": "<@U06JZ30FN8Y> Review please",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "low",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": [
+              "request"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774266159.900749",
+          "userId": "U06JZ30FN8Y",
+          "displayName": "Shamoil Attaar",
+          "realName": "Shamoil Attaar",
+          "text": "<!here>\n<https://docs.google.com/document/d/12prP3LQQX7-YyQJndnXfjTcIeqi9DbC3OnflbRhu6E4/edit?tab=t.0>\nDoc for the referral approches to be finalised by client",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": "29d9582b-e8ce-423d-a69a-696aae9d13a9",
+            "seriousness": "high",
+            "summary": "Shamoil Attaar is still waiting for a reply (27d 3h overdue).",
+            "dueAt": "2026-02-25T11:04:24.971Z",
+            "repeatedAskCount": 1
+          }
+        },
+        {
+          "ts": "1774269465.176779",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "okay",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "ignore",
+            "signalType": "ignore",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.9,
+            "reasonCodes": [
+              "ack_only"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774275316.133639",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "Lmk once script generator is live and working, lmk beforehand if it won't be so. \n<@U0AF6HQ57PU> <@U06JZ30FN8Y>",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774277527.157749",
+          "userId": "U0AF6HQ57PU",
+          "displayName": "Rushil",
+          "realName": "Rushil Jain",
+          "text": "<https://2dqwrcvq32sxrsm2nig7t64j2i0mnhal.lambda-url.us-east-1.on.aws/> - idiolect\n  <https://ckx3ckz4vrfwk6gihti6dj4hse0whlnb.lambda-url.us-east-1.on.aws/> - sfv\n  <https://fmzg6rd6nsqaomeugivp36znee0ajfrw.lambda-url.us-east-1.on.aws/> - lfv",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774278403.841619",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "im on call",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "low",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774278408.658529",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "<@U06JZ30FN8Y> lmk once its working",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "low",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774278416.009059",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "would be ideal to be able to demo it on call",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774279215.476589",
+          "userId": "U06JZ30FN8Y",
+          "displayName": "Shamoil Attaar",
+          "realName": "Shamoil Attaar",
+          "text": "<@U08U35F9DB9>\ntested it seems to be working",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": "29d9582b-e8ce-423d-a69a-696aae9d13a9",
+            "seriousness": "high",
+            "summary": "Shamoil Attaar is still waiting for a reply (27d 3h overdue).",
+            "dueAt": "2026-02-25T11:04:24.971Z",
+            "repeatedAskCount": 1
+          }
+        },
+        {
+          "ts": "1774279678.986749",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "not working",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "message_candidate",
+            "signalType": "human_risk",
+            "severity": "medium",
+            "stateImpact": "issue_opened",
+            "evidenceType": "heuristic",
+            "surfacePriority": "medium",
+            "stateTransition": "issue_opened",
+            "confidence": 0.74,
+            "reasonCodes": [
+              "problem_signal",
+              "breakage_signal"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774279682.415039",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "<@U06JZ30FN8Y> broke on call",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "low",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774279714.458029",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "<@U0AF6HQ57PU> please check and give me a recording of the working demo on prod, also make sure normal user's can use their script writer and beta user's use the newer one",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": [
+              "request"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774281314.309259",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "not working",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "message_candidate",
+            "signalType": "human_risk",
+            "severity": "medium",
+            "stateImpact": "issue_opened",
+            "evidenceType": "heuristic",
+            "surfacePriority": "medium",
+            "stateTransition": "issue_opened",
+            "confidence": 0.74,
+            "reasonCodes": [
+              "problem_signal",
+              "breakage_signal"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774281315.591549",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774282093.042429",
+          "userId": "U0AF6HQ57PU",
+          "displayName": "Rushil",
+          "realName": "Rushil Jain",
+          "text": "<@U08U35F9DB9> Please find for beta and non beta user",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": [
+              "request"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774282255.440509",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "Bhai why did it take 2 mins for a short form script?",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": [
+              "question"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774282268.322949",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "I believe it used to take 30-50 seconds on n8n?",
+          "replyCount": 1,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": [
+              "question"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774282327.552049",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "I'll test it out and give to client",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774334208.721839",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774334253.464159",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774334730.377249",
+          "userId": "U0AF6HQ57PU",
+          "displayName": "Rushil",
+          "realName": "Rushil Jain",
+          "text": "<@U06JZ30FN8Y> can you please send the RCA format",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": [
+              "request"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774335260.256019",
+          "userId": "U06JZ30FN8Y",
+          "displayName": "Shamoil Attaar",
+          "realName": "Shamoil Attaar",
+          "text": "<https://docs.google.com/document/d/1HCaUZ8j4eyzlQ0hCGXx3TfJZzFp7k2HXNjsKsEOLyZ0/edit?usp=sharing>",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": "29d9582b-e8ce-423d-a69a-696aae9d13a9",
+            "seriousness": "high",
+            "summary": "Shamoil Attaar is still waiting for a reply (27d 3h overdue).",
+            "dueAt": "2026-02-25T11:04:24.971Z",
+            "repeatedAskCount": 1
+          }
+        },
+        {
+          "ts": "1774336384.553539",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "<@U0AF6HQ57PU> <http://docs.google.com/document/d/1sXwVbGRcegGHCmhmArr1kHRSFk_iql4Qyxn86kEzjiQ/edit?usp=sharing> please follow this RCA instead",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": [
+              "request"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774336670.554579",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "Yesterday's call\n\n<https://fathom.video/share/5ATWHN5mCZNGA7z4qPeRhiGJ7xxALT62> <!channel>",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774343197.478119",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "<https://docs.google.com/document/d/10jUBVmIW4RdSwlDKaZRAL_DHSKWpgSf2/edit?usp=sharing&amp;ouid=117570190442799432114&amp;rtpof=true&amp;sd=true|Road Map : AI Video Editing Tool>",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774353453.949839",
+          "userId": "U0AF6HQ57PU",
+          "displayName": "Rushil",
+          "realName": "Rushil Jain",
+          "text": "<@U06JZ30FN8Y> Can I merge <https://github.com/wednesday-solutions/sage-n2/pull/795> ?",
+          "replyCount": 2,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": [
+              "question"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774355993.753599",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "<@U0AF6HQ57PU> please share the RCA here to <@U03LMV7TQ7K>",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": [
+              "request"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774356155.825219",
+          "userId": "U0AF6HQ57PU",
+          "displayName": "Rushil",
+          "realName": "Rushil Jain",
+          "text": "",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774358933.485769",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "<https://github.com/wednesday-solutions/sage-backend/pull/14>\n<@U0AF6HQ57PU> read the md doc, approve, deploy dev lambda and test, if it works (idiolect aswell) deploy on prod",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "not_candidate",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "not_candidate",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        }
+      ],
+      "recentMessages": [
+        {
+          "ts": "1773812495.642489",
+          "threadTs": "1773812495.642489",
+          "userId": "U08U35F9DB9",
+          "text": "<@U06JZ30FN8Y> <@U0AF6HQ57PU>",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773812511.045169",
+          "threadTs": "1773812511.045169",
+          "userId": "U08U35F9DB9",
+          "text": "<@U06JZ30FN8Y> <@U0AF6HQ57PU> (matthew nelson)",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773812703.443639",
+          "threadTs": "1773812495.642489",
+          "userId": "U06JZ30FN8Y",
+          "text": "<https://wednesdaysol.slack.com/archives/C08V66T6XQC/p1773742126605279?thread_ts=1773727688.055269&amp;cid=C08V66T6XQC>",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773812744.124089",
+          "threadTs": "1773812511.045169",
+          "userId": "U06JZ30FN8Y",
+          "text": "this is the content atomization thing we discussed that we will give a download than add to board given it replaces the script",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773818081.633589",
+          "threadTs": "1773818081.633589",
+          "userId": "U08U35F9DB9",
+          "text": "<@U06JZ30FN8Y> <@U0AF6HQ57PU> please fill this form by EOD. In context to the last sprint (18) <https://docs.google.com/forms/d/e/1FAIpQLSd_B0Vb2d1oTNuUa6tmya1lHPmIPE5RMGlb9zzR3K4xcO9uIA/viewform?usp=header>",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773818130.296589",
+          "threadTs": "1773812511.045169",
+          "userId": "U08U35F9DB9",
+          "text": "yes please do that",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773818513.063519",
+          "threadTs": "1773818081.633589",
+          "userId": "U0AF6HQ57PU",
+          "text": "Done",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773818742.717149",
+          "threadTs": "1773812523.554629",
+          "userId": "U06JZ30FN8Y",
+          "text": "I tried Instagram, linkedIn, Youtube Shorts, and X\nthe thumbnail is coming on all the platforms except Youtube short which is the expected behavior",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773825059.984389",
+          "threadTs": null,
+          "userId": "U0AF6HQ57PU",
+          "text": "Claude is suggesting: LFV_scripting — Suggested Changes\n\n  Remove (fully duplicated by hardcoded directives)\n\n  Entire \"Script Length Control\" section (the videoLength table + processing steps + important notes) — the hardcoded directives have this word-for-word. Keeping both wastes ~400 tokens\n  every generation and creates a contradiction risk if one is updated without the other.",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773825066.367659",
+          "threadTs": null,
+          "userId": "U0AF6HQ57PU",
+          "text": "<@U08U35F9DB9> <@U06JZ30FN8Y>",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773825105.059059",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "yea",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773825107.736599",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "u can",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773825124.619159",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "but we do need the length control okay, id say lets keep most of the instructions in supabase",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773825146.232409",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "it would be best do pass as minimal prompts as possible from the backend, have supabase instruction set control it",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773825155.325229",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "so we have a single source of truth",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773843194.248709",
+          "threadTs": null,
+          "userId": "U0AF6HQ57PU",
+          "text": "<@U08U35F9DB9>",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773848701.031639",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "<https://fathom.video/share/jpQE5q-66T6_tty_3gNktuBYykyy6Jdz>\n<!channel> good call, do watch, some sprint changes",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773904283.654619",
+          "threadTs": "1773904283.654619",
+          "userId": "U08U35F9DB9",
+          "text": "<@U06JZ30FN8Y> <@U0AF6HQ57PU> <https://docs.google.com/spreadsheets/d/1LJe-XxwSRHwuhYi0Xsp2tz9PcyIRaXrxBFItB2TxEQ4/edit?gid=1162632454#gid=1162632454>\ntake a look at the sprint plan lmk what u guys think, if the bandwidth allows, i have kept some room for our other works aswell, the required doc is linked below in the sheet for more input regarding features",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773904790.056989",
+          "threadTs": null,
+          "userId": "U0AF6HQ57PU",
+          "text": "",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773912039.033369",
+          "threadTs": "1773904283.654619",
+          "userId": "U06JZ30FN8Y",
+          "text": "are we keeping pinterest before the referral?\ngiven they are emphasizing more on the referral...",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773912626.861889",
+          "threadTs": "1773904283.654619",
+          "userId": "U0AF6HQ57PU",
+          "text": "Looks good to me",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773912692.737059",
+          "threadTs": "1773904283.654619",
+          "userId": "U08U35F9DB9",
+          "text": "for pinterest we will wait till design audit of the UIUX of posts feature",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773912767.068729",
+          "threadTs": "1773904283.654619",
+          "userId": "U06JZ30FN8Y",
+          "text": "it is marked as p2 so that is the reason I asked  I think then it is ok\nlooks good",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773912779.291969",
+          "threadTs": "1773904283.654619",
+          "userId": "U08U35F9DB9",
+          "text": "okay will update",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773921111.648629",
+          "threadTs": "1773921111.648629",
+          "userId": "U06JZ30FN8Y",
+          "text": "<@U0AF6HQ57PU>\nplease review:\n<https://github.com/wednesday-solutions/sage-n2/pull/777>\nthis is the sage concierge plan",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773985510.196209",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "On half day leave, will join in second half",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773986178.349669",
+          "threadTs": "1773921111.648629",
+          "userId": "U0AF6HQ57PU",
+          "text": "done",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773993233.476999",
+          "threadTs": "1773993233.476999",
+          "userId": "U06JZ30FN8Y",
+          "text": "<@U0AF6HQ57PU>\n<https://github.com/wednesday-solutions/sage-n2/pull/778>\nPlease review",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774009293.323079",
+          "threadTs": "1774009293.323079",
+          "userId": "U0AF6HQ57PU",
+          "text": "<@U06JZ30FN8Y> Please review\n<https://github.com/wednesday-solutions/sage-n2/pulls>",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774010177.739309",
+          "threadTs": "1774009293.323079",
+          "userId": "U06JZ30FN8Y",
+          "text": "Hey <@U0AF6HQ57PU> in one of the pr I can se we have created a new page of sage profile did we not hd it already?",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774010454.440939",
+          "threadTs": "1773993233.476999",
+          "userId": "U06JZ30FN8Y",
+          "text": "<@U0AF6HQ57PU>",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774018318.785139",
+          "threadTs": null,
+          "userId": "U06JZ30FN8Y",
+          "text": "<@U08U35F9DB9>\nwe are live with concierge",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774019793.149399",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "<https://fathom.video/share/a9e4kLDQCxiE9SE_uzP8mk6zGs-eS7xE>\n<!channel> good call team, thanks happy weekend",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774248604.168589",
+          "threadTs": "1774246463.633989",
+          "userId": "U06JZ30FN8Y",
+          "text": "AI Video Editing\nCoordinator Role for teams\nCompliance Checks\nSage Concierge\nTeam Audit changes and UX improvements\nBug Fixes and support Tickets\n• Replaced AddtoBoard with download for content atomization\n• Edit enabled for Video Scripts when empty\n• Thumbnail issue for linkedin and facebook",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774265408.729889",
+          "threadTs": null,
+          "userId": "U0AF6HQ57PU",
+          "text": "<https://github.com/wednesday-solutions/sage-n2/pulls>",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774265415.082359",
+          "threadTs": null,
+          "userId": "U0AF6HQ57PU",
+          "text": "<@U06JZ30FN8Y> Review please",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774266159.900749",
+          "threadTs": null,
+          "userId": "U06JZ30FN8Y",
+          "text": "<!here>\n<https://docs.google.com/document/d/12prP3LQQX7-YyQJndnXfjTcIeqi9DbC3OnflbRhu6E4/edit?tab=t.0>\nDoc for the referral approches to be finalised by client",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774269465.176779",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "okay",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774275316.133639",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "Lmk once script generator is live and working, lmk beforehand if it won't be so. \n<@U0AF6HQ57PU> <@U06JZ30FN8Y>",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774277527.157749",
+          "threadTs": null,
+          "userId": "U0AF6HQ57PU",
+          "text": "<https://2dqwrcvq32sxrsm2nig7t64j2i0mnhal.lambda-url.us-east-1.on.aws/> - idiolect\n  <https://ckx3ckz4vrfwk6gihti6dj4hse0whlnb.lambda-url.us-east-1.on.aws/> - sfv\n  <https://fmzg6rd6nsqaomeugivp36znee0ajfrw.lambda-url.us-east-1.on.aws/> - lfv",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774278403.841619",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "im on call",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774278408.658529",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "<@U06JZ30FN8Y> lmk once its working",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774278416.009059",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "would be ideal to be able to demo it on call",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774279215.476589",
+          "threadTs": null,
+          "userId": "U06JZ30FN8Y",
+          "text": "<@U08U35F9DB9>\ntested it seems to be working",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774279678.986749",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "not working",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774279682.415039",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "<@U06JZ30FN8Y> broke on call",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774279714.458029",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "<@U0AF6HQ57PU> please check and give me a recording of the working demo on prod, also make sure normal user's can use their script writer and beta user's use the newer one",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774281314.309259",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "not working",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774281315.591549",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774282093.042429",
+          "threadTs": null,
+          "userId": "U0AF6HQ57PU",
+          "text": "<@U08U35F9DB9> Please find for beta and non beta user",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774282255.440509",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "Bhai why did it take 2 mins for a short form script?",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774282268.322949",
+          "threadTs": "1774282268.322949",
+          "userId": "U08U35F9DB9",
+          "text": "I believe it used to take 30-50 seconds on n8n?",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774282327.552049",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "I'll test it out and give to client",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774288232.563129",
+          "threadTs": "1774282268.322949",
+          "userId": "U06JZ30FN8Y",
+          "text": "it seems to be a supabase issue I shared the link with you as well\n<https://status.supabase.com/incidents/yd9665bmp63c>\nthings seems to be picking up speed with n8n",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774334208.721839",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774334253.464159",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774334730.377249",
+          "threadTs": null,
+          "userId": "U0AF6HQ57PU",
+          "text": "<@U06JZ30FN8Y> can you please send the RCA format",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774335260.256019",
+          "threadTs": null,
+          "userId": "U06JZ30FN8Y",
+          "text": "<https://docs.google.com/document/d/1HCaUZ8j4eyzlQ0hCGXx3TfJZzFp7k2HXNjsKsEOLyZ0/edit?usp=sharing>",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774335336.689109",
+          "threadTs": "1774334336.162099",
+          "userId": "U06JZ30FN8Y",
+          "text": "done",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774336384.553539",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "<@U0AF6HQ57PU> <http://docs.google.com/document/d/1sXwVbGRcegGHCmhmArr1kHRSFk_iql4Qyxn86kEzjiQ/edit?usp=sharing> please follow this RCA instead",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774336589.642529",
+          "threadTs": "1774334198.714639",
+          "userId": "U06JZ30FN8Y",
+          "text": "Will be live in next production release",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774336640.195189",
+          "threadTs": "1774334231.168259",
+          "userId": "U06JZ30FN8Y",
+          "text": "will check this and try to recover it will let you know if we are able to",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774336670.554579",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "Yesterday's call\n\n<https://fathom.video/share/5ATWHN5mCZNGA7z4qPeRhiGJ7xxALT62> <!channel>",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774343197.478119",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "<https://docs.google.com/document/d/10jUBVmIW4RdSwlDKaZRAL_DHSKWpgSf2/edit?usp=sharing&amp;ouid=117570190442799432114&amp;rtpof=true&amp;sd=true|Road Map : AI Video Editing Tool>",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774353453.949839",
+          "threadTs": "1774353453.949839",
+          "userId": "U0AF6HQ57PU",
+          "text": "<@U06JZ30FN8Y> Can I merge <https://github.com/wednesday-solutions/sage-n2/pull/795> ?",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774354234.543699",
+          "threadTs": "1774353453.949839",
+          "userId": "U06JZ30FN8Y",
+          "text": "have you made the changes we discussed?",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774354253.249219",
+          "threadTs": "1774353453.949839",
+          "userId": "U0AF6HQ57PU",
+          "text": "yes",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774355993.753599",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "<@U0AF6HQ57PU> please share the RCA here to <@U03LMV7TQ7K>",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774356155.825219",
+          "threadTs": null,
+          "userId": "U0AF6HQ57PU",
+          "text": "",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774358933.485769",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "<https://github.com/wednesday-solutions/sage-backend/pull/14>\n<@U0AF6HQ57PU> read the md doc, approve, deploy dev lambda and test, if it works (idiolect aswell) deploy on prod",
+          "source": "realtime",
+          "analysisStatus": "skipped",
+          "subtype": null
+        }
+      ],
+      "humanReview": {
+        "expectedHealth": null,
+        "expectedSignal": null,
+        "shouldBeRed": null,
+        "summaryFairness": null,
+        "summaryAccuracyNotes": null,
+        "primaryUserFeeling": null,
+        "keyEvidence": [],
+        "reviewer": null,
+        "reviewedAt": null,
+        "notes": null
+      },
+      "autoReview": {
+        "verdict": "likely_undercalled",
+        "reviewPriority": "high",
+        "confidence": "medium",
+        "proposedHumanReview": {
+          "expectedHealth": "at-risk",
+          "expectedSignal": "escalating",
+          "shouldBeRed": true,
+          "summaryFairness": "understated",
+          "primaryUserFeeling": "This may feel too calm for the unresolved pressure in the channel.",
+          "keyEvidence": [
+            "2 high-severity alerts remain unresolved.",
+            "1 surfaced thread carries medium or high operational risk.",
+            "2 recent conversation signals suggest blocker, escalation, or meaningful tension."
+          ],
+          "notes": "Hard-risk evidence is present (multiple severe alerts, blocked/escalated threads, or critical incidents). The summary sounds calmer than the underlying unresolved risk counts. The current persisted channel state may be too mild for the observed signals."
+        },
+        "rationale": [
+          "Hard-risk evidence is present (multiple severe alerts, blocked/escalated threads, or critical incidents).",
+          "The summary sounds calmer than the underlying unresolved risk counts.",
+          "The current persisted channel state may be too mild for the observed signals."
+        ]
+      }
+    },
+    {
+      "caseId": "02-sage-n8n-errors-C09SH8QAU1J",
+      "workspaceId": "TBTS5A6DA",
+      "channelId": "C09SH8QAU1J",
+      "channelName": "sage_n8n_errors",
+      "conversationType": "private_channel",
+      "channelStatus": "ready",
+      "lastEventAt": null,
+      "windowPolicy": {
+        "defaultScope": "active",
+        "activeWindowDays": 7,
+        "archiveWindowDays": 30,
+        "liveWindowHours": 24
+      },
+      "currentSystemAssessment": {
+        "persisted": {
+          "signal": "escalating",
+          "health": "at-risk",
+          "confidence": 0.72,
+          "evidenceTier": "confirmed",
+          "effectiveChannelMode": "automation",
+          "riskDrivers": [
+            {
+              "key": "critical_operational_incidents",
+              "label": "Critical operational incidents",
+              "message": "11 critical automation incidents were detected recently.",
+              "category": "operational",
+              "severity": "high"
+            }
+          ],
+          "attentionSummary": {
+            "title": "Attention required",
+            "status": "action",
+            "message": "11 critical automation incidents were detected recently.",
+            "driverKeys": [
+              "critical_operational_incidents"
+            ]
+          },
+          "messageDispositionCounts": {
+            "inFlight": 0,
+            "contextOnly": 0,
+            "totalInWindow": 11,
+            "deepAiAnalyzed": 0,
+            "routineAcknowledgments": 0,
+            "heuristicIncidentSignals": 11,
+            "storedWithoutDeepAnalysis": 11
+          },
+          "latestSummaryCompleteness": "complete",
+          "hasActiveDegradations": false,
+          "activeDegradationCount": 0
+        },
+        "recomputedFromCounts": {
+          "healthCounts": {
+            "analysisWindowDays": 7,
+            "openAlertCount": 0,
+            "highSeverityAlertCount": 0,
+            "automationIncidentCount": 11,
+            "criticalAutomationIncidentCount": 11,
+            "automationIncident24hCount": 1,
+            "criticalAutomationIncident24hCount": 1,
+            "humanRiskSignalCount": 0,
+            "requestSignalCount": 0,
+            "decisionSignalCount": 0,
+            "resolutionSignalCount": 0,
+            "flaggedMessageCount": 0,
+            "highRiskMessageCount": 0,
+            "attentionThreadCount": 0,
+            "blockedThreadCount": 0,
+            "escalatedThreadCount": 0,
+            "riskyThreadCount": 0,
+            "totalMessageCount": 11,
+            "skippedMessageCount": 11,
+            "contextOnlyMessageCount": 0,
+            "ignoredMessageCount": 0,
+            "inflightMessageCount": 0,
+            "openMeetingObligationCount": 0,
+            "overdueMeetingObligationCount": 0
+          },
+          "sentimentSnapshot": {
+            "totalAnalyzed": 0,
+            "highRiskCount": 0,
+            "emotionDistribution": {
+              "anger": 0,
+              "disgust": 0,
+              "fear": 0,
+              "joy": 0,
+              "neutral": 0,
+              "sadness": 0,
+              "surprise": 0
+            }
+          },
+          "signal": "escalating",
+          "health": "at-risk",
+          "signalConfidence": 0.72,
+          "signalEvidenceTier": "confirmed",
+          "negativeRatio": 0,
+          "effectiveChannelMode": "automation",
+          "riskDrivers": [
+            {
+              "key": "critical_operational_incidents",
+              "label": "Critical operational incidents",
+              "message": "11 critical automation incidents were detected recently.",
+              "severity": "high",
+              "category": "operational"
+            }
+          ],
+          "attentionSummary": {
+            "status": "action",
+            "title": "Attention required",
+            "message": "11 critical automation incidents were detected recently.",
+            "driverKeys": [
+              "critical_operational_incidents"
+            ]
+          },
+          "messageDispositionCounts": {
+            "totalInWindow": 11,
+            "deepAiAnalyzed": 0,
+            "heuristicIncidentSignals": 11,
+            "contextOnly": 0,
+            "routineAcknowledgments": 0,
+            "storedWithoutDeepAnalysis": 11,
+            "inFlight": 0
+          }
+        },
+        "differsFromPersisted": false
+      },
+      "classification": {
+        "channelType": "automated",
+        "confidence": 0.95,
+        "source": "llm",
+        "clientName": null,
+        "topics": [
+          "workflow errors",
+          "automation",
+          "debugging",
+          "PERPLEXITY",
+          "Short-Form Ideation"
+        ],
+        "reasoning": "The channel consists entirely of bot/system messages related to workflow errors, indicating it is primarily automated."
+      },
+      "truthDiagnostics": {
+        "ingestReadiness": "ready",
+        "intelligenceReadiness": "ready",
+        "messageCounts": {
+          "total": 44,
+          "eligible": 0,
+          "pending": 0,
+          "processing": 0,
+          "completed": 0,
+          "failed": 0,
+          "suppressed": 44,
+          "partial": 0
+        },
+        "summaryArtifact": {
+          "id": "530534ff-d232-40aa-b348-77fb3da03a50",
+          "workspace_id": "TBTS5A6DA",
+          "channel_id": "C09SH8QAU1J",
+          "summary_kind": "backfill_rollup",
+          "generation_mode": "llm",
+          "completeness_status": "complete",
+          "summary": "This week, the channel is focused on resolving multiple workflow errors related to the 'Short-Form Ideation' and 'PERPLEXITY' automation processes. Sidd has reported recurring issues, including 'WorkflowHasIssuesError' and missing JSON objects, which are preventing the workflows from executing. Specifically, the 'Short-Form Ideation (Evergreen + Timely) V2' workflow is flagged as having issues that need fixing before it can run. Additionally, the 'PERPLEXITY' workflow is encountering errors due to missing required inputs. The team needs to address these errors to restore functionality to the automated processes. No other topics or decisions are currently active in the channel.",
+          "key_decisions_json": [],
+          "degraded_reasons_json": [],
+          "coverage_start_ts": "1773813613.446279",
+          "coverage_end_ts": "1774332013.410289",
+          "candidate_message_count": 11,
+          "included_message_count": 11,
+          "artifact_version": 1,
+          "source_run_id": null,
+          "superseded_at": null,
+          "superseded_by_artifact_id": null,
+          "created_at": "2026-03-24T12:59:14.500Z",
+          "updated_at": "2026-03-24T12:59:14.500Z"
+        },
+        "backfillRun": null,
+        "activeDegradationEvents": []
+      },
+      "summaryContext": {
+        "runningSummary": "This week, the channel is focused on resolving multiple workflow errors related to the 'Short-Form Ideation' and 'PERPLEXITY' automation processes. Sidd has reported recurring issues, including 'WorkflowHasIssuesError' and missing JSON objects, which are preventing the workflows from executing. Specifically, the 'Short-Form Ideation (Evergreen + Timely) V2' workflow is flagged as having issues that need fixing before it can run. Additionally, the 'PERPLEXITY' workflow is encountering errors due to missing required inputs. The team needs to address these errors to restore functionality to the automated processes. No other topics or decisions are currently active in the channel.",
+        "keyDecisions": [],
+        "totalRollups": 2,
+        "latestRollupAt": "2026-03-24T12:59:14.980Z",
+        "totalMessages": 44,
+        "totalAnalyses": 0,
+        "activeMessageCount": 11,
+        "activeWindowDays": 7,
+        "sentimentSnapshot": {
+          "updatedAt": "2026-03-24T12:59:08.166Z",
+          "highRiskCount": 0,
+          "totalMessages": 44,
+          "emotionDistribution": {
+            "joy": 0,
+            "fear": 0,
+            "anger": 0,
+            "disgust": 0,
+            "neutral": 0,
+            "sadness": 0,
+            "surprise": 0
+          }
+        }
+      },
+      "rawHealthCounts": {
+        "analysisWindowDays": 7,
+        "openAlertCount": 0,
+        "highSeverityAlertCount": 0,
+        "automationIncidentCount": 11,
+        "criticalAutomationIncidentCount": 11,
+        "automationIncident24hCount": 1,
+        "criticalAutomationIncident24hCount": 1,
+        "humanRiskSignalCount": 0,
+        "requestSignalCount": 0,
+        "decisionSignalCount": 0,
+        "resolutionSignalCount": 0,
+        "flaggedMessageCount": 0,
+        "highRiskMessageCount": 0,
+        "attentionThreadCount": 0,
+        "blockedThreadCount": 0,
+        "escalatedThreadCount": 0,
+        "riskyThreadCount": 0,
+        "totalMessageCount": 11,
+        "skippedMessageCount": 11,
+        "contextOnlyMessageCount": 0,
+        "ignoredMessageCount": 0,
+        "inflightMessageCount": 0,
+        "totalAnalyzedCount": 0,
+        "angerCount": 0,
+        "disgustCount": 0,
+        "fearCount": 0,
+        "joyCount": 0,
+        "neutralCount": 0,
+        "sadnessCount": 0,
+        "surpriseCount": 0
+      },
+      "activeThreads": [],
+      "surfacedThreadInsights": [],
+      "topLevelMessages": [
+        {
+          "ts": "1773813613.446279",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "@channel\n\n:rotating_light: *Workflow Error: Agent: Short-Form Ideation (Evergreen + Timely) V2 realtime dev*\n\n*Node:* \n*Error:* WorkflowHasIssuesError\n\n*Message:*\nThe workflow has issues and cannot be executed for that reason. Please fix them first.\n\n*Fix:*\n\n\n*View Execution:*\n<https://n2cm.app.n8n.cloud/workflow/fynD9lhfx8qBE8Bo/executions/20152>\n_Automated with this <https://n2cm.app.n8n.cloud/workflow/ZfckBsbo0Lc5kWlR?utm_source=n8n-internal&amp;utm_medium=powered_by&amp;utm_campaign=n8n-nodes-base.slack_e6f44a68796cb60103d642dfb2894e10fc9810eb5c385add2ad75c970640197a|n8n workflow>_",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "operational_incident",
+            "severity": "high",
+            "stateImpact": "blocked",
+            "evidenceType": "heuristic",
+            "surfacePriority": "high",
+            "stateTransition": "blocked",
+            "confidence": 0.9,
+            "reasonCodes": [
+              "request",
+              "problem_signal",
+              "workflow_error_pattern"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1773900013.448089",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "@channel\n\n:rotating_light: *Workflow Error: Agent: Short-Form Ideation (Evergreen + Timely) V2 realtime dev*\n\n*Node:* \n*Error:* WorkflowHasIssuesError\n\n*Message:*\nThe workflow has issues and cannot be executed for that reason. Please fix them first.\n\n*Fix:*\n\n\n*View Execution:*\n<https://n2cm.app.n8n.cloud/workflow/fynD9lhfx8qBE8Bo/executions/20201>\n_Automated with this <https://n2cm.app.n8n.cloud/workflow/ZfckBsbo0Lc5kWlR?utm_source=n8n-internal&amp;utm_medium=powered_by&amp;utm_campaign=n8n-nodes-base.slack_e6f44a68796cb60103d642dfb2894e10fc9810eb5c385add2ad75c970640197a|n8n workflow>_",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "operational_incident",
+            "severity": "high",
+            "stateImpact": "blocked",
+            "evidenceType": "heuristic",
+            "surfacePriority": "high",
+            "stateTransition": "blocked",
+            "confidence": 0.9,
+            "reasonCodes": [
+              "request",
+              "problem_signal",
+              "workflow_error_pattern"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1773948618.302849",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "@channel\n\n:rotating_light: *Workflow Error: Agent: Short form V2 realtime PERPLEXITY*\n\n*Node:* Code\n*Error:* \n\n*Message:*\nNo JSON object found [line 8]\n\n*Fix:*\n\n\n*View Execution:*\n<https://n2cm.app.n8n.cloud/workflow/kY6ZE5Cz733T9z7M/executions/20271>\n_Automated with this <https://n2cm.app.n8n.cloud/workflow/ZfckBsbo0Lc5kWlR?utm_source=n8n-internal&amp;utm_medium=powered_by&amp;utm_campaign=n8n-nodes-base.slack_e6f44a68796cb60103d642dfb2894e10fc9810eb5c385add2ad75c970640197a|n8n workflow>_",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "operational_incident",
+            "severity": "high",
+            "stateImpact": "blocked",
+            "evidenceType": "heuristic",
+            "surfacePriority": "high",
+            "stateTransition": "blocked",
+            "confidence": 0.9,
+            "reasonCodes": [
+              "problem_signal",
+              "workflow_error_pattern"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1773986413.536689",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "@channel\n\n:rotating_light: *Workflow Error: Agent: Short-Form Ideation (Evergreen + Timely) V2 realtime dev*\n\n*Node:* \n*Error:* WorkflowHasIssuesError\n\n*Message:*\nThe workflow has issues and cannot be executed for that reason. Please fix them first.\n\n*Fix:*\n\n\n*View Execution:*\n<https://n2cm.app.n8n.cloud/workflow/fynD9lhfx8qBE8Bo/executions/20314>\n_Automated with this <https://n2cm.app.n8n.cloud/workflow/ZfckBsbo0Lc5kWlR?utm_source=n8n-internal&amp;utm_medium=powered_by&amp;utm_campaign=n8n-nodes-base.slack_e6f44a68796cb60103d642dfb2894e10fc9810eb5c385add2ad75c970640197a|n8n workflow>_",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "operational_incident",
+            "severity": "high",
+            "stateImpact": "blocked",
+            "evidenceType": "heuristic",
+            "surfacePriority": "high",
+            "stateTransition": "blocked",
+            "confidence": 0.9,
+            "reasonCodes": [
+              "request",
+              "problem_signal",
+              "workflow_error_pattern"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774072813.424449",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "@channel\n\n:rotating_light: *Workflow Error: Agent: Short-Form Ideation (Evergreen + Timely) V2 realtime dev*\n\n*Node:* \n*Error:* WorkflowHasIssuesError\n\n*Message:*\nThe workflow has issues and cannot be executed for that reason. Please fix them first.\n\n*Fix:*\n\n\n*View Execution:*\n<https://n2cm.app.n8n.cloud/workflow/fynD9lhfx8qBE8Bo/executions/20552>\n_Automated with this <https://n2cm.app.n8n.cloud/workflow/ZfckBsbo0Lc5kWlR?utm_source=n8n-internal&amp;utm_medium=powered_by&amp;utm_campaign=n8n-nodes-base.slack_e6f44a68796cb60103d642dfb2894e10fc9810eb5c385add2ad75c970640197a|n8n workflow>_",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "operational_incident",
+            "severity": "high",
+            "stateImpact": "blocked",
+            "evidenceType": "heuristic",
+            "surfacePriority": "high",
+            "stateTransition": "blocked",
+            "confidence": 0.9,
+            "reasonCodes": [
+              "request",
+              "problem_signal",
+              "workflow_error_pattern"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774091449.727169",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "@channel\n\n:rotating_light: *Workflow Error: Agent: Short form V2 realtime PERPLEXITY dev*\n\n*Node:* Process Input &amp; Categorize1\n*Error:* \n\n*Message:*\nEither \"input\" or \"videoIdea\" is required [line 17]\n\n*Fix:*\n\n\n*View Execution:*\n<https://n2cm.app.n8n.cloud/workflow/JP9WdjopIvUQp4DM/executions/20598>\n_Automated with this <https://n2cm.app.n8n.cloud/workflow/ZfckBsbo0Lc5kWlR?utm_source=n8n-internal&amp;utm_medium=powered_by&amp;utm_campaign=n8n-nodes-base.slack_e6f44a68796cb60103d642dfb2894e10fc9810eb5c385add2ad75c970640197a|n8n workflow>_",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "operational_incident",
+            "severity": "high",
+            "stateImpact": "blocked",
+            "evidenceType": "heuristic",
+            "surfacePriority": "high",
+            "stateTransition": "blocked",
+            "confidence": 0.9,
+            "reasonCodes": [
+              "problem_signal",
+              "workflow_error_pattern"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774091807.237879",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "@channel\n\n:rotating_light: *Workflow Error: Agent: Short form V2 realtime PERPLEXITY dev*\n\n*Node:* Process Input &amp; Categorize1\n*Error:* \n\n*Message:*\nEither \"input\" or \"videoIdea\" is required [line 17]\n\n*Fix:*\n\n\n*View Execution:*\n<https://n2cm.app.n8n.cloud/workflow/JP9WdjopIvUQp4DM/executions/20600>\n_Automated with this <https://n2cm.app.n8n.cloud/workflow/ZfckBsbo0Lc5kWlR?utm_source=n8n-internal&amp;utm_medium=powered_by&amp;utm_campaign=n8n-nodes-base.slack_e6f44a68796cb60103d642dfb2894e10fc9810eb5c385add2ad75c970640197a|n8n workflow>_",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "operational_incident",
+            "severity": "high",
+            "stateImpact": "blocked",
+            "evidenceType": "heuristic",
+            "surfacePriority": "high",
+            "stateTransition": "blocked",
+            "confidence": 0.9,
+            "reasonCodes": [
+              "problem_signal",
+              "workflow_error_pattern"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774159213.566839",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "@channel\n\n:rotating_light: *Workflow Error: Agent: Short-Form Ideation (Evergreen + Timely) V2 realtime dev*\n\n*Node:* \n*Error:* WorkflowHasIssuesError\n\n*Message:*\nThe workflow has issues and cannot be executed for that reason. Please fix them first.\n\n*Fix:*\n\n\n*View Execution:*\n<https://n2cm.app.n8n.cloud/workflow/fynD9lhfx8qBE8Bo/executions/20638>\n_Automated with this <https://n2cm.app.n8n.cloud/workflow/ZfckBsbo0Lc5kWlR?utm_source=n8n-internal&amp;utm_medium=powered_by&amp;utm_campaign=n8n-nodes-base.slack_e6f44a68796cb60103d642dfb2894e10fc9810eb5c385add2ad75c970640197a|n8n workflow>_",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "operational_incident",
+            "severity": "high",
+            "stateImpact": "blocked",
+            "evidenceType": "heuristic",
+            "surfacePriority": "high",
+            "stateTransition": "blocked",
+            "confidence": 0.9,
+            "reasonCodes": [
+              "request",
+              "problem_signal",
+              "workflow_error_pattern"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774245613.412539",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "@channel\n\n:rotating_light: *Workflow Error: Agent: Short-Form Ideation (Evergreen + Timely) V2 realtime dev*\n\n*Node:* \n*Error:* WorkflowHasIssuesError\n\n*Message:*\nThe workflow has issues and cannot be executed for that reason. Please fix them first.\n\n*Fix:*\n\n\n*View Execution:*\n<https://n2cm.app.n8n.cloud/workflow/fynD9lhfx8qBE8Bo/executions/20730>\n_Automated with this <https://n2cm.app.n8n.cloud/workflow/ZfckBsbo0Lc5kWlR?utm_source=n8n-internal&amp;utm_medium=powered_by&amp;utm_campaign=n8n-nodes-base.slack_e6f44a68796cb60103d642dfb2894e10fc9810eb5c385add2ad75c970640197a|n8n workflow>_",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "operational_incident",
+            "severity": "high",
+            "stateImpact": "blocked",
+            "evidenceType": "heuristic",
+            "surfacePriority": "high",
+            "stateTransition": "blocked",
+            "confidence": 0.9,
+            "reasonCodes": [
+              "request",
+              "problem_signal",
+              "workflow_error_pattern"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774266877.295249",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "@channel\n\n:rotating_light: *Workflow Error: Agent: Short form V2 realtime PERPLEXITY*\n\n*Node:* Process Input &amp; Categorize1\n*Error:* \n\n*Message:*\nEither \"input\" or \"videoIdea\" is required [line 17]\n\n*Fix:*\n\n\n*View Execution:*\n<https://n2cm.app.n8n.cloud/workflow/kY6ZE5Cz733T9z7M/executions/20737>\n_Automated with this <https://n2cm.app.n8n.cloud/workflow/ZfckBsbo0Lc5kWlR?utm_source=n8n-internal&amp;utm_medium=powered_by&amp;utm_campaign=n8n-nodes-base.slack_e6f44a68796cb60103d642dfb2894e10fc9810eb5c385add2ad75c970640197a|n8n workflow>_",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "operational_incident",
+            "severity": "high",
+            "stateImpact": "blocked",
+            "evidenceType": "heuristic",
+            "surfacePriority": "high",
+            "stateTransition": "blocked",
+            "confidence": 0.9,
+            "reasonCodes": [
+              "problem_signal",
+              "workflow_error_pattern"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774332013.410289",
+          "userId": "U08U35F9DB9",
+          "displayName": "Sidd",
+          "realName": "Sidd",
+          "text": "@channel\n\n:rotating_light: *Workflow Error: Agent: Short-Form Ideation (Evergreen + Timely) V2 realtime dev*\n\n*Node:* \n*Error:* WorkflowHasIssuesError\n\n*Message:*\nThe workflow has issues and cannot be executed for that reason. Please fix them first.\n\n*Fix:*\n\n\n*View Execution:*\n<https://n2cm.app.n8n.cloud/workflow/fynD9lhfx8qBE8Bo/executions/20850>\n_Automated with this <https://n2cm.app.n8n.cloud/workflow/ZfckBsbo0Lc5kWlR?utm_source=n8n-internal&amp;utm_medium=powered_by&amp;utm_campaign=n8n-nodes-base.slack_e6f44a68796cb60103d642dfb2894e10fc9810eb5c385add2ad75c970640197a|n8n workflow>_",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "operational_incident",
+            "severity": "high",
+            "stateImpact": "blocked",
+            "evidenceType": "heuristic",
+            "surfacePriority": "high",
+            "stateTransition": "blocked",
+            "confidence": 0.9,
+            "reasonCodes": [
+              "request",
+              "problem_signal",
+              "workflow_error_pattern"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        }
+      ],
+      "recentMessages": [
+        {
+          "ts": "1773813613.446279",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "@channel\n\n:rotating_light: *Workflow Error: Agent: Short-Form Ideation (Evergreen + Timely) V2 realtime dev*\n\n*Node:* \n*Error:* WorkflowHasIssuesError\n\n*Message:*\nThe workflow has issues and cannot be executed for that reason. Please fix them first.\n\n*Fix:*\n\n\n*View Execution:*\n<https://n2cm.app.n8n.cloud/workflow/fynD9lhfx8qBE8Bo/executions/20152>\n_Automated with this <https://n2cm.app.n8n.cloud/workflow/ZfckBsbo0Lc5kWlR?utm_source=n8n-internal&amp;utm_medium=powered_by&amp;utm_campaign=n8n-nodes-base.slack_e6f44a68796cb60103d642dfb2894e10fc9810eb5c385add2ad75c970640197a|n8n workflow>_",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773900013.448089",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "@channel\n\n:rotating_light: *Workflow Error: Agent: Short-Form Ideation (Evergreen + Timely) V2 realtime dev*\n\n*Node:* \n*Error:* WorkflowHasIssuesError\n\n*Message:*\nThe workflow has issues and cannot be executed for that reason. Please fix them first.\n\n*Fix:*\n\n\n*View Execution:*\n<https://n2cm.app.n8n.cloud/workflow/fynD9lhfx8qBE8Bo/executions/20201>\n_Automated with this <https://n2cm.app.n8n.cloud/workflow/ZfckBsbo0Lc5kWlR?utm_source=n8n-internal&amp;utm_medium=powered_by&amp;utm_campaign=n8n-nodes-base.slack_e6f44a68796cb60103d642dfb2894e10fc9810eb5c385add2ad75c970640197a|n8n workflow>_",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773948618.302849",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "@channel\n\n:rotating_light: *Workflow Error: Agent: Short form V2 realtime PERPLEXITY*\n\n*Node:* Code\n*Error:* \n\n*Message:*\nNo JSON object found [line 8]\n\n*Fix:*\n\n\n*View Execution:*\n<https://n2cm.app.n8n.cloud/workflow/kY6ZE5Cz733T9z7M/executions/20271>\n_Automated with this <https://n2cm.app.n8n.cloud/workflow/ZfckBsbo0Lc5kWlR?utm_source=n8n-internal&amp;utm_medium=powered_by&amp;utm_campaign=n8n-nodes-base.slack_e6f44a68796cb60103d642dfb2894e10fc9810eb5c385add2ad75c970640197a|n8n workflow>_",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773986413.536689",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "@channel\n\n:rotating_light: *Workflow Error: Agent: Short-Form Ideation (Evergreen + Timely) V2 realtime dev*\n\n*Node:* \n*Error:* WorkflowHasIssuesError\n\n*Message:*\nThe workflow has issues and cannot be executed for that reason. Please fix them first.\n\n*Fix:*\n\n\n*View Execution:*\n<https://n2cm.app.n8n.cloud/workflow/fynD9lhfx8qBE8Bo/executions/20314>\n_Automated with this <https://n2cm.app.n8n.cloud/workflow/ZfckBsbo0Lc5kWlR?utm_source=n8n-internal&amp;utm_medium=powered_by&amp;utm_campaign=n8n-nodes-base.slack_e6f44a68796cb60103d642dfb2894e10fc9810eb5c385add2ad75c970640197a|n8n workflow>_",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774072813.424449",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "@channel\n\n:rotating_light: *Workflow Error: Agent: Short-Form Ideation (Evergreen + Timely) V2 realtime dev*\n\n*Node:* \n*Error:* WorkflowHasIssuesError\n\n*Message:*\nThe workflow has issues and cannot be executed for that reason. Please fix them first.\n\n*Fix:*\n\n\n*View Execution:*\n<https://n2cm.app.n8n.cloud/workflow/fynD9lhfx8qBE8Bo/executions/20552>\n_Automated with this <https://n2cm.app.n8n.cloud/workflow/ZfckBsbo0Lc5kWlR?utm_source=n8n-internal&amp;utm_medium=powered_by&amp;utm_campaign=n8n-nodes-base.slack_e6f44a68796cb60103d642dfb2894e10fc9810eb5c385add2ad75c970640197a|n8n workflow>_",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774091449.727169",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "@channel\n\n:rotating_light: *Workflow Error: Agent: Short form V2 realtime PERPLEXITY dev*\n\n*Node:* Process Input &amp; Categorize1\n*Error:* \n\n*Message:*\nEither \"input\" or \"videoIdea\" is required [line 17]\n\n*Fix:*\n\n\n*View Execution:*\n<https://n2cm.app.n8n.cloud/workflow/JP9WdjopIvUQp4DM/executions/20598>\n_Automated with this <https://n2cm.app.n8n.cloud/workflow/ZfckBsbo0Lc5kWlR?utm_source=n8n-internal&amp;utm_medium=powered_by&amp;utm_campaign=n8n-nodes-base.slack_e6f44a68796cb60103d642dfb2894e10fc9810eb5c385add2ad75c970640197a|n8n workflow>_",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774091807.237879",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "@channel\n\n:rotating_light: *Workflow Error: Agent: Short form V2 realtime PERPLEXITY dev*\n\n*Node:* Process Input &amp; Categorize1\n*Error:* \n\n*Message:*\nEither \"input\" or \"videoIdea\" is required [line 17]\n\n*Fix:*\n\n\n*View Execution:*\n<https://n2cm.app.n8n.cloud/workflow/JP9WdjopIvUQp4DM/executions/20600>\n_Automated with this <https://n2cm.app.n8n.cloud/workflow/ZfckBsbo0Lc5kWlR?utm_source=n8n-internal&amp;utm_medium=powered_by&amp;utm_campaign=n8n-nodes-base.slack_e6f44a68796cb60103d642dfb2894e10fc9810eb5c385add2ad75c970640197a|n8n workflow>_",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774159213.566839",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "@channel\n\n:rotating_light: *Workflow Error: Agent: Short-Form Ideation (Evergreen + Timely) V2 realtime dev*\n\n*Node:* \n*Error:* WorkflowHasIssuesError\n\n*Message:*\nThe workflow has issues and cannot be executed for that reason. Please fix them first.\n\n*Fix:*\n\n\n*View Execution:*\n<https://n2cm.app.n8n.cloud/workflow/fynD9lhfx8qBE8Bo/executions/20638>\n_Automated with this <https://n2cm.app.n8n.cloud/workflow/ZfckBsbo0Lc5kWlR?utm_source=n8n-internal&amp;utm_medium=powered_by&amp;utm_campaign=n8n-nodes-base.slack_e6f44a68796cb60103d642dfb2894e10fc9810eb5c385add2ad75c970640197a|n8n workflow>_",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774245613.412539",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "@channel\n\n:rotating_light: *Workflow Error: Agent: Short-Form Ideation (Evergreen + Timely) V2 realtime dev*\n\n*Node:* \n*Error:* WorkflowHasIssuesError\n\n*Message:*\nThe workflow has issues and cannot be executed for that reason. Please fix them first.\n\n*Fix:*\n\n\n*View Execution:*\n<https://n2cm.app.n8n.cloud/workflow/fynD9lhfx8qBE8Bo/executions/20730>\n_Automated with this <https://n2cm.app.n8n.cloud/workflow/ZfckBsbo0Lc5kWlR?utm_source=n8n-internal&amp;utm_medium=powered_by&amp;utm_campaign=n8n-nodes-base.slack_e6f44a68796cb60103d642dfb2894e10fc9810eb5c385add2ad75c970640197a|n8n workflow>_",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774266877.295249",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "@channel\n\n:rotating_light: *Workflow Error: Agent: Short form V2 realtime PERPLEXITY*\n\n*Node:* Process Input &amp; Categorize1\n*Error:* \n\n*Message:*\nEither \"input\" or \"videoIdea\" is required [line 17]\n\n*Fix:*\n\n\n*View Execution:*\n<https://n2cm.app.n8n.cloud/workflow/kY6ZE5Cz733T9z7M/executions/20737>\n_Automated with this <https://n2cm.app.n8n.cloud/workflow/ZfckBsbo0Lc5kWlR?utm_source=n8n-internal&amp;utm_medium=powered_by&amp;utm_campaign=n8n-nodes-base.slack_e6f44a68796cb60103d642dfb2894e10fc9810eb5c385add2ad75c970640197a|n8n workflow>_",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774332013.410289",
+          "threadTs": null,
+          "userId": "U08U35F9DB9",
+          "text": "@channel\n\n:rotating_light: *Workflow Error: Agent: Short-Form Ideation (Evergreen + Timely) V2 realtime dev*\n\n*Node:* \n*Error:* WorkflowHasIssuesError\n\n*Message:*\nThe workflow has issues and cannot be executed for that reason. Please fix them first.\n\n*Fix:*\n\n\n*View Execution:*\n<https://n2cm.app.n8n.cloud/workflow/fynD9lhfx8qBE8Bo/executions/20850>\n_Automated with this <https://n2cm.app.n8n.cloud/workflow/ZfckBsbo0Lc5kWlR?utm_source=n8n-internal&amp;utm_medium=powered_by&amp;utm_campaign=n8n-nodes-base.slack_e6f44a68796cb60103d642dfb2894e10fc9810eb5c385add2ad75c970640197a|n8n workflow>_",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        }
+      ],
+      "humanReview": {
+        "expectedHealth": null,
+        "expectedSignal": null,
+        "shouldBeRed": null,
+        "summaryFairness": null,
+        "summaryAccuracyNotes": null,
+        "primaryUserFeeling": null,
+        "keyEvidence": [],
+        "reviewer": null,
+        "reviewedAt": null,
+        "notes": null
+      },
+      "autoReview": {
+        "verdict": "likely_fair",
+        "reviewPriority": "low",
+        "confidence": "medium",
+        "proposedHumanReview": {
+          "expectedHealth": "at-risk",
+          "expectedSignal": "escalating",
+          "shouldBeRed": true,
+          "summaryFairness": "fair",
+          "primaryUserFeeling": "This likely feels directionally fair to a user.",
+          "keyEvidence": [
+            "11 critical automation incidents were detected recently."
+          ],
+          "notes": "Hard-risk evidence is present (multiple severe alerts, blocked/escalated threads, or critical incidents). The summary tone is broadly aligned with the available counts."
+        },
+        "rationale": [
+          "Hard-risk evidence is present (multiple severe alerts, blocked/escalated threads, or critical incidents).",
+          "The summary tone is broadly aligned with the available counts."
+        ]
+      }
+    },
+    {
+      "caseId": "03-channel-sentiment-C0ALG0SK3FG",
+      "workspaceId": "TBTS5A6DA",
+      "channelId": "C0ALG0SK3FG",
+      "channelName": "channel-sentiment",
+      "conversationType": "public_channel",
+      "channelStatus": "ready",
+      "lastEventAt": null,
+      "windowPolicy": {
+        "defaultScope": "active",
+        "activeWindowDays": 7,
+        "archiveWindowDays": 30,
+        "liveWindowHours": 24
+      },
+      "currentSystemAssessment": {
+        "persisted": {
+          "signal": "escalating",
+          "health": "at-risk",
+          "confidence": 0.55,
+          "evidenceTier": "pattern",
+          "effectiveChannelMode": "collaboration",
+          "riskDrivers": [
+            {
+              "key": "risky_threads",
+              "label": "Risky surfaced threads",
+              "message": "2 surfaced threads carry medium or high operational risk.",
+              "category": "thread",
+              "severity": "medium"
+            }
+          ],
+          "attentionSummary": {
+            "title": "Attention required",
+            "status": "action",
+            "message": "2 surfaced threads carry medium or high operational risk.",
+            "driverKeys": [
+              "risky_threads"
+            ]
+          },
+          "messageDispositionCounts": {
+            "inFlight": 0,
+            "contextOnly": 9,
+            "totalInWindow": 10,
+            "deepAiAnalyzed": 0,
+            "routineAcknowledgments": 1,
+            "heuristicIncidentSignals": 0,
+            "storedWithoutDeepAnalysis": 10
+          },
+          "latestSummaryCompleteness": "complete",
+          "hasActiveDegradations": false,
+          "activeDegradationCount": 0
+        },
+        "recomputedFromCounts": {
+          "healthCounts": {
+            "analysisWindowDays": 7,
+            "openAlertCount": 0,
+            "highSeverityAlertCount": 0,
+            "automationIncidentCount": 0,
+            "criticalAutomationIncidentCount": 0,
+            "automationIncident24hCount": 0,
+            "criticalAutomationIncident24hCount": 0,
+            "humanRiskSignalCount": 0,
+            "requestSignalCount": 1,
+            "decisionSignalCount": 0,
+            "resolutionSignalCount": 1,
+            "flaggedMessageCount": 0,
+            "highRiskMessageCount": 0,
+            "attentionThreadCount": 2,
+            "blockedThreadCount": 0,
+            "escalatedThreadCount": 0,
+            "riskyThreadCount": 2,
+            "totalMessageCount": 10,
+            "skippedMessageCount": 10,
+            "contextOnlyMessageCount": 7,
+            "ignoredMessageCount": 1,
+            "inflightMessageCount": 0,
+            "openMeetingObligationCount": 0,
+            "overdueMeetingObligationCount": 0
+          },
+          "sentimentSnapshot": {
+            "totalAnalyzed": 0,
+            "highRiskCount": 0,
+            "emotionDistribution": {
+              "anger": 0,
+              "disgust": 0,
+              "fear": 0,
+              "joy": 0,
+              "neutral": 0,
+              "sadness": 0,
+              "surprise": 0
+            }
+          },
+          "signal": "escalating",
+          "health": "at-risk",
+          "signalConfidence": 0.55,
+          "signalEvidenceTier": "pattern",
+          "negativeRatio": 0,
+          "effectiveChannelMode": "collaboration",
+          "riskDrivers": [
+            {
+              "key": "risky_threads",
+              "label": "Risky surfaced threads",
+              "message": "2 surfaced threads carry medium or high operational risk.",
+              "severity": "medium",
+              "category": "thread"
+            }
+          ],
+          "attentionSummary": {
+            "status": "action",
+            "title": "Attention required",
+            "message": "2 surfaced threads carry medium or high operational risk.",
+            "driverKeys": [
+              "risky_threads"
+            ]
+          },
+          "messageDispositionCounts": {
+            "totalInWindow": 10,
+            "deepAiAnalyzed": 0,
+            "heuristicIncidentSignals": 0,
+            "contextOnly": 9,
+            "routineAcknowledgments": 1,
+            "storedWithoutDeepAnalysis": 10,
+            "inFlight": 0
+          }
+        },
+        "differsFromPersisted": false
+      },
+      "classification": {
+        "channelType": "internal_engineering",
+        "confidence": 0.9,
+        "source": "llm",
+        "clientName": null,
+        "topics": [
+          "operational issues",
+          "code debugging",
+          "system failures"
+        ],
+        "reasoning": "The channel discusses technical issues related to code and system failures, indicating it is an internal engineering channel without external client involvement."
+      },
+      "truthDiagnostics": {
+        "ingestReadiness": "ready",
+        "intelligenceReadiness": "ready",
+        "messageCounts": {
+          "total": 18,
+          "eligible": 0,
+          "pending": 0,
+          "processing": 0,
+          "completed": 0,
+          "failed": 0,
+          "suppressed": 18,
+          "partial": 0
+        },
+        "summaryArtifact": {
+          "id": "1c33c747-f0dc-4c76-8e43-6c2bebe55864",
+          "workspace_id": "TBTS5A6DA",
+          "channel_id": "C0ALG0SK3FG",
+          "summary_kind": "thread_rollup",
+          "generation_mode": "llm",
+          "completeness_status": "complete",
+          "summary": "Pratyush indicated that 'there is something we need to fix' and mentioned that the team will implement 'some changes' to address the issue. However, specific next steps have not been outlined, and the situation requires immediate attention.",
+          "key_decisions_json": [],
+          "degraded_reasons_json": [],
+          "coverage_start_ts": "1773903735.416939",
+          "coverage_end_ts": "1773903753.777719",
+          "candidate_message_count": 2,
+          "included_message_count": 2,
+          "artifact_version": 1,
+          "source_run_id": null,
+          "superseded_at": null,
+          "superseded_by_artifact_id": null,
+          "created_at": "2026-03-24T13:18:36.458Z",
+          "updated_at": "2026-03-24T13:18:36.458Z"
+        },
+        "backfillRun": null,
+        "activeDegradationEvents": []
+      },
+      "summaryContext": {
+        "runningSummary": "This week, the channel is currently facing significant operational issues. Pratyush reported that 'nothing is working now' and that 'everything is broke,' indicating a critical failure in the system. He mentioned that there is 'something wrong in the code' that needs to be addressed. The team is expected to implement changes to resolve these issues, but specific next steps have not yet been outlined. The urgency of the situation suggests that immediate attention is required to diagnose and fix the underlying problems.",
+        "keyDecisions": [],
+        "totalRollups": 12,
+        "latestRollupAt": "2026-03-24T13:18:37.518Z",
+        "totalMessages": 19,
+        "totalAnalyses": 0,
+        "activeMessageCount": 10,
+        "activeWindowDays": 7,
+        "sentimentSnapshot": {
+          "updatedAt": "2026-03-24T13:17:41.725Z",
+          "highRiskCount": 0,
+          "totalMessages": 19,
+          "emotionDistribution": {
+            "joy": 0,
+            "fear": 0,
+            "anger": 0,
+            "disgust": 0,
+            "neutral": 0,
+            "sadness": 0,
+            "surprise": 0
+          }
+        }
+      },
+      "rawHealthCounts": {
+        "analysisWindowDays": 7,
+        "openAlertCount": 0,
+        "highSeverityAlertCount": 0,
+        "automationIncidentCount": 0,
+        "criticalAutomationIncidentCount": 0,
+        "automationIncident24hCount": 0,
+        "criticalAutomationIncident24hCount": 0,
+        "humanRiskSignalCount": 0,
+        "requestSignalCount": 1,
+        "decisionSignalCount": 0,
+        "resolutionSignalCount": 1,
+        "flaggedMessageCount": 0,
+        "highRiskMessageCount": 0,
+        "attentionThreadCount": 2,
+        "blockedThreadCount": 0,
+        "escalatedThreadCount": 0,
+        "riskyThreadCount": 2,
+        "totalMessageCount": 10,
+        "skippedMessageCount": 10,
+        "contextOnlyMessageCount": 7,
+        "ignoredMessageCount": 1,
+        "inflightMessageCount": 0,
+        "totalAnalyzedCount": 0,
+        "angerCount": 0,
+        "disgustCount": 0,
+        "fearCount": 0,
+        "joyCount": 0,
+        "neutralCount": 0,
+        "sadnessCount": 0,
+        "surpriseCount": 0
+      },
+      "activeThreads": [
+        {
+          "threadTs": "1774344861.840739",
+          "replyCount": 1,
+          "lastActivity": "2026-03-24T09:34:21.840Z"
+        },
+        {
+          "threadTs": "1773903735.416939",
+          "replyCount": 2,
+          "lastActivity": "2026-03-19T07:02:33.777Z"
+        }
+      ],
+      "surfacedThreadInsights": [
+        {
+          "threadTs": "1773903735.416939",
+          "surfacePriority": "medium",
+          "threadState": "investigating",
+          "emotionalTemperature": "watch",
+          "operationalRisk": "medium",
+          "primaryIssue": "urgent need to fix operational issues",
+          "summary": "Pratyush indicated that 'there is something we need to fix' and mentioned that the team will implement 'some changes' to address the issue. However, specific next steps have not been outlined, and the situation requires immediate attention.",
+          "openQuestions": [],
+          "lastMeaningfulChangeTs": "1234567890.123456"
+        },
+        {
+          "threadTs": "1774344861.840739",
+          "surfacePriority": "high",
+          "threadState": "investigating",
+          "emotionalTemperature": "tense",
+          "operationalRisk": "high",
+          "primaryIssue": "Critical system failure requiring immediate attention.",
+          "summary": "The team is currently facing significant operational issues, with Pratyush stating that 'nothing is working now' and 'everything is broke.' There is an urgent need to address 'something wrong in the code,' but specific next steps have not been outlined yet.",
+          "openQuestions": [],
+          "lastMeaningfulChangeTs": "1234567890.123456"
+        }
+      ],
+      "topLevelMessages": [
+        {
+          "ts": "1773903710.731229",
+          "userId": "U0AEDN8CWGL",
+          "displayName": "Pratyush",
+          "realName": "Pratyush",
+          "text": "nothing is working now",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "resolution_signal",
+            "signalType": "resolution",
+            "severity": "medium",
+            "stateImpact": "resolved",
+            "evidenceType": "heuristic",
+            "surfacePriority": "medium",
+            "stateTransition": "resolved",
+            "confidence": 0.66,
+            "reasonCodes": [
+              "resolution_signal"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1773903712.795309",
+          "userId": "U0AEDN8CWGL",
+          "displayName": "Pratyush",
+          "realName": "Pratyush",
+          "text": "all bad",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "low",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1773903718.951559",
+          "userId": "U0AEDN8CWGL",
+          "displayName": "Pratyush",
+          "realName": "Pratyush",
+          "text": "everything is broke",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "low",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1773903735.416939",
+          "userId": "U0AEDN8CWGL",
+          "displayName": "Pratyush",
+          "realName": "Pratyush",
+          "text": "there is sonmething we need to fix",
+          "replyCount": 1,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "message_candidate",
+            "signalType": "request",
+            "severity": "medium",
+            "stateImpact": "investigating",
+            "evidenceType": "heuristic",
+            "surfacePriority": "medium",
+            "stateTransition": "investigating",
+            "confidence": 0.68,
+            "reasonCodes": [
+              "action_required_signal"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1773907704.578909",
+          "userId": "U0AEDN8CWGL",
+          "displayName": "Pratyush",
+          "realName": "Pratyush",
+          "text": "?",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "ignore",
+            "signalType": "ignore",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.9,
+            "reasonCodes": [
+              "ack_only",
+              "question"
+            ]
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1773924872.964989",
+          "userId": "U0AEDN8CWGL",
+          "displayName": "Pratyush",
+          "realName": "Pratyush",
+          "text": "there is something wrong in the code",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1773924895.968869",
+          "userId": "U0AEDN8CWGL",
+          "displayName": "Pratyush",
+          "realName": "Pratyush",
+          "text": "and I think we need somthing to make sense",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774344854.309709",
+          "userId": "U0AEDN8CWGL",
+          "displayName": "Pratyush",
+          "realName": "Pratyush",
+          "text": "<https://fathom.video/share/x3Px6tWK3XBu99qYvsW2GgTzC-ZMWkg8>",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        },
+        {
+          "ts": "1774344861.840739",
+          "userId": "U0AEDN8CWGL",
+          "displayName": "Pratyush",
+          "realName": "Pratyush",
+          "text": "<https://fathom.video/share/x3Px6tWK3XBu99qYvsW2GgTzC-ZMWkg8>",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        }
+      ],
+      "recentMessages": [
+        {
+          "ts": "1773903710.731229",
+          "threadTs": null,
+          "userId": "U0AEDN8CWGL",
+          "text": "nothing is working now",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773903712.795309",
+          "threadTs": null,
+          "userId": "U0AEDN8CWGL",
+          "text": "all bad",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773903718.951559",
+          "threadTs": null,
+          "userId": "U0AEDN8CWGL",
+          "text": "everything is broke",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773903735.416939",
+          "threadTs": "1773903735.416939",
+          "userId": "U0AEDN8CWGL",
+          "text": "there is sonmething we need to fix",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773903753.777719",
+          "threadTs": "1773903735.416939",
+          "userId": "U0AEDN8CWGL",
+          "text": "we'll do something changes on that. as well",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773907704.578909",
+          "threadTs": null,
+          "userId": "U0AEDN8CWGL",
+          "text": "?",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773924872.964989",
+          "threadTs": null,
+          "userId": "U0AEDN8CWGL",
+          "text": "there is something wrong in the code",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1773924895.968869",
+          "threadTs": null,
+          "userId": "U0AEDN8CWGL",
+          "text": "and I think we need somthing to make sense",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774344854.309709",
+          "threadTs": null,
+          "userId": "U0AEDN8CWGL",
+          "text": "<https://fathom.video/share/x3Px6tWK3XBu99qYvsW2GgTzC-ZMWkg8>",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        },
+        {
+          "ts": "1774344861.840739",
+          "threadTs": "1774344861.840739",
+          "userId": "U0AEDN8CWGL",
+          "text": "<https://fathom.video/share/x3Px6tWK3XBu99qYvsW2GgTzC-ZMWkg8>",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        }
+      ],
+      "humanReview": {
+        "expectedHealth": null,
+        "expectedSignal": null,
+        "shouldBeRed": null,
+        "summaryFairness": null,
+        "summaryAccuracyNotes": null,
+        "primaryUserFeeling": null,
+        "keyEvidence": [],
+        "reviewer": null,
+        "reviewedAt": null,
+        "notes": null
+      },
+      "autoReview": {
+        "verdict": "likely_false_red",
+        "reviewPriority": "high",
+        "confidence": "high",
+        "proposedHumanReview": {
+          "expectedHealth": "attention",
+          "expectedSignal": "elevated",
+          "shouldBeRed": false,
+          "summaryFairness": "mixed",
+          "primaryUserFeeling": "This likely feels louder than the actual recent conversation.",
+          "keyEvidence": [
+            "2 surfaced threads carry medium or high operational risk."
+          ],
+          "notes": "There is meaningful risk pressure, but it is not strongly corroborated by hard-risk evidence. The summary has to balance both unresolved risk and visible progress. The current persisted channel state looks stronger than this first-pass review would suggest."
+        },
+        "rationale": [
+          "There is meaningful risk pressure, but it is not strongly corroborated by hard-risk evidence.",
+          "The summary has to balance both unresolved risk and visible progress.",
+          "The current persisted channel state looks stronger than this first-pass review would suggest."
+        ]
+      }
+    },
+    {
+      "caseId": "04-sentiment-analysis-testing-main-C0ALL079N91",
+      "workspaceId": "TBTS5A6DA",
+      "channelId": "C0ALL079N91",
+      "channelName": "sentiment-analysis-testing-main",
+      "conversationType": "public_channel",
+      "channelStatus": "ready",
+      "lastEventAt": null,
+      "windowPolicy": {
+        "defaultScope": "active",
+        "activeWindowDays": 7,
+        "archiveWindowDays": 30,
+        "liveWindowHours": 24
+      },
+      "currentSystemAssessment": {
+        "persisted": {
+          "signal": "escalating",
+          "health": "at-risk",
+          "confidence": 0.55,
+          "evidenceTier": "pattern",
+          "effectiveChannelMode": "collaboration",
+          "riskDrivers": [
+            {
+              "key": "high_severity_alerts",
+              "label": "Open high-severity alerts",
+              "message": "1 high-severity alert remains unresolved.",
+              "category": "alert",
+              "severity": "high"
+            }
+          ],
+          "attentionSummary": {
+            "title": "Attention required",
+            "status": "action",
+            "message": "1 high-severity alert remains unresolved.",
+            "driverKeys": [
+              "high_severity_alerts"
+            ]
+          },
+          "messageDispositionCounts": {
+            "inFlight": 0,
+            "contextOnly": 1,
+            "totalInWindow": 1,
+            "deepAiAnalyzed": 0,
+            "routineAcknowledgments": 0,
+            "heuristicIncidentSignals": 0,
+            "storedWithoutDeepAnalysis": 1
+          },
+          "latestSummaryCompleteness": "complete",
+          "hasActiveDegradations": false,
+          "activeDegradationCount": 0
+        },
+        "recomputedFromCounts": {
+          "healthCounts": {
+            "analysisWindowDays": 7,
+            "openAlertCount": 1,
+            "highSeverityAlertCount": 1,
+            "automationIncidentCount": 0,
+            "criticalAutomationIncidentCount": 0,
+            "automationIncident24hCount": 0,
+            "criticalAutomationIncident24hCount": 0,
+            "humanRiskSignalCount": 0,
+            "requestSignalCount": 0,
+            "decisionSignalCount": 0,
+            "resolutionSignalCount": 0,
+            "flaggedMessageCount": 0,
+            "highRiskMessageCount": 0,
+            "attentionThreadCount": 0,
+            "blockedThreadCount": 0,
+            "escalatedThreadCount": 0,
+            "riskyThreadCount": 0,
+            "totalMessageCount": 1,
+            "skippedMessageCount": 1,
+            "contextOnlyMessageCount": 1,
+            "ignoredMessageCount": 0,
+            "inflightMessageCount": 0,
+            "openMeetingObligationCount": 0,
+            "overdueMeetingObligationCount": 0
+          },
+          "sentimentSnapshot": {
+            "totalAnalyzed": 0,
+            "highRiskCount": 0,
+            "emotionDistribution": {
+              "anger": 0,
+              "disgust": 0,
+              "fear": 0,
+              "joy": 0,
+              "neutral": 0,
+              "sadness": 0,
+              "surprise": 0
+            }
+          },
+          "signal": "elevated",
+          "health": "attention",
+          "signalConfidence": 0.55,
+          "signalEvidenceTier": "pattern",
+          "negativeRatio": 0,
+          "effectiveChannelMode": "collaboration",
+          "riskDrivers": [
+            {
+              "key": "high_severity_alerts",
+              "label": "Open high-severity alerts",
+              "message": "1 high-severity alert remains unresolved.",
+              "severity": "high",
+              "category": "alert"
+            }
+          ],
+          "attentionSummary": {
+            "status": "action",
+            "title": "Attention required",
+            "message": "1 high-severity alert remains unresolved.",
+            "driverKeys": [
+              "high_severity_alerts"
+            ]
+          },
+          "messageDispositionCounts": {
+            "totalInWindow": 1,
+            "deepAiAnalyzed": 0,
+            "heuristicIncidentSignals": 0,
+            "contextOnly": 1,
+            "routineAcknowledgments": 0,
+            "storedWithoutDeepAnalysis": 1,
+            "inFlight": 0
+          }
+        },
+        "differsFromPersisted": true
+      },
+      "classification": {
+        "channelType": "client_delivery",
+        "confidence": 0.8,
+        "source": "llm",
+        "clientName": null,
+        "topics": [
+          "project completion",
+          "output expectations",
+          "handover document"
+        ],
+        "reasoning": "The channel discusses project completion timelines and deliverables, indicating it is focused on active project delivery."
+      },
+      "truthDiagnostics": {
+        "ingestReadiness": "ready",
+        "intelligenceReadiness": "ready",
+        "messageCounts": {
+          "total": 7,
+          "eligible": 0,
+          "pending": 0,
+          "processing": 0,
+          "completed": 0,
+          "failed": 0,
+          "suppressed": 7,
+          "partial": 0
+        },
+        "summaryArtifact": {
+          "id": "d6ee303a-5644-4634-ab3e-def02adedb4e",
+          "workspace_id": "TBTS5A6DA",
+          "channel_id": "C0ALL079N91",
+          "summary_kind": "thread_rollup",
+          "generation_mode": "llm",
+          "completeness_status": "complete",
+          "summary": "Pratyush shared a link to a video on Fathom, but there are no further discussions or action items. The channel is stable with no pressing issues or decisions needing attention this week.",
+          "key_decisions_json": [],
+          "degraded_reasons_json": [],
+          "coverage_start_ts": "1774344887.836159",
+          "coverage_end_ts": "1774344887.836159",
+          "candidate_message_count": 1,
+          "included_message_count": 1,
+          "artifact_version": 1,
+          "source_run_id": null,
+          "superseded_at": null,
+          "superseded_by_artifact_id": null,
+          "created_at": "2026-03-24T13:18:13.212Z",
+          "updated_at": "2026-03-24T13:18:13.212Z"
+        },
+        "backfillRun": null,
+        "activeDegradationEvents": []
+      },
+      "summaryContext": {
+        "runningSummary": "Currently, there are no active discussions or blockers in the channel. The latest message from Pratyush shared a link to a video on Fathom, but no further context or action items were provided. The channel remains stable with no pressing issues or decisions needing attention this week.",
+        "keyDecisions": [],
+        "totalRollups": 8,
+        "latestRollupAt": "2026-03-24T13:18:15.878Z",
+        "totalMessages": 11,
+        "totalAnalyses": 0,
+        "activeMessageCount": 1,
+        "activeWindowDays": 7,
+        "sentimentSnapshot": {
+          "updatedAt": "2026-03-24T13:17:24.383Z",
+          "highRiskCount": 0,
+          "totalMessages": 11,
+          "emotionDistribution": {
+            "joy": 0,
+            "fear": 0,
+            "anger": 0,
+            "disgust": 0,
+            "neutral": 0,
+            "sadness": 0,
+            "surprise": 0
+          }
+        }
+      },
+      "rawHealthCounts": {
+        "analysisWindowDays": 7,
+        "openAlertCount": 1,
+        "highSeverityAlertCount": 1,
+        "automationIncidentCount": 0,
+        "criticalAutomationIncidentCount": 0,
+        "automationIncident24hCount": 0,
+        "criticalAutomationIncident24hCount": 0,
+        "humanRiskSignalCount": 0,
+        "requestSignalCount": 0,
+        "decisionSignalCount": 0,
+        "resolutionSignalCount": 0,
+        "flaggedMessageCount": 0,
+        "highRiskMessageCount": 0,
+        "attentionThreadCount": 0,
+        "blockedThreadCount": 0,
+        "escalatedThreadCount": 0,
+        "riskyThreadCount": 0,
+        "totalMessageCount": 1,
+        "skippedMessageCount": 1,
+        "contextOnlyMessageCount": 1,
+        "ignoredMessageCount": 0,
+        "inflightMessageCount": 0,
+        "totalAnalyzedCount": 0,
+        "angerCount": 0,
+        "disgustCount": 0,
+        "fearCount": 0,
+        "joyCount": 0,
+        "neutralCount": 0,
+        "sadnessCount": 0,
+        "surpriseCount": 0
+      },
+      "activeThreads": [
+        {
+          "threadTs": "1774344887.836159",
+          "replyCount": 1,
+          "lastActivity": "2026-03-24T09:34:47.836Z"
+        }
+      ],
+      "surfacedThreadInsights": [],
+      "topLevelMessages": [
+        {
+          "ts": "1774344887.836159",
+          "userId": "U0AEDN8CWGL",
+          "displayName": "Pratyush",
+          "realName": "Pratyush",
+          "text": "<https://fathom.video/share/x3Px6tWK3XBu99qYvsW2GgTzC-ZMWkg8>",
+          "replyCount": 0,
+          "analysisStatus": "skipped",
+          "analysis": {
+            "eligibility": "policy_suppressed",
+            "execution": "not_run",
+            "quality": "none",
+            "suppressionReason": "channel_not_ready",
+            "dominantEmotion": null,
+            "interactionTone": null,
+            "escalationRisk": null,
+            "explanation": null,
+            "themes": [],
+            "messageIntent": null,
+            "isActionable": null,
+            "isBlocking": null,
+            "urgencyLevel": null
+          },
+          "triage": {
+            "candidateKind": "context_only",
+            "signalType": "context",
+            "severity": "none",
+            "stateImpact": "none",
+            "evidenceType": "heuristic",
+            "surfacePriority": "none",
+            "stateTransition": null,
+            "confidence": 0.58,
+            "reasonCodes": []
+          },
+          "followUp": {
+            "id": null,
+            "seriousness": null,
+            "summary": null,
+            "dueAt": null,
+            "repeatedAskCount": null
+          }
+        }
+      ],
+      "recentMessages": [
+        {
+          "ts": "1774344887.836159",
+          "threadTs": "1774344887.836159",
+          "userId": "U0AEDN8CWGL",
+          "text": "<https://fathom.video/share/x3Px6tWK3XBu99qYvsW2GgTzC-ZMWkg8>",
+          "source": "backfill",
+          "analysisStatus": "skipped",
+          "subtype": null
+        }
+      ],
+      "humanReview": {
+        "expectedHealth": null,
+        "expectedSignal": null,
+        "shouldBeRed": null,
+        "summaryFairness": null,
+        "summaryAccuracyNotes": null,
+        "primaryUserFeeling": null,
+        "keyEvidence": [],
+        "reviewer": null,
+        "reviewedAt": null,
+        "notes": null
+      },
+      "autoReview": {
+        "verdict": "likely_false_red",
+        "reviewPriority": "high",
+        "confidence": "high",
+        "proposedHumanReview": {
+          "expectedHealth": "attention",
+          "expectedSignal": "elevated",
+          "shouldBeRed": false,
+          "summaryFairness": "understated",
+          "primaryUserFeeling": "This likely feels louder than the actual recent conversation.",
+          "keyEvidence": [
+            "1 high-severity alert remains unresolved.",
+            "Persisted state differs from recomputed state (escalating -> elevated)."
+          ],
+          "notes": "There is meaningful risk pressure, but it is not strongly corroborated by hard-risk evidence. The active window is very thin for a collaboration channel, so a red suggestion would likely feel too strong. The summary sounds calmer than the underlying unresolved risk counts. The current persisted channel state looks stronger than this first-pass review would suggest."
+        },
+        "rationale": [
+          "There is meaningful risk pressure, but it is not strongly corroborated by hard-risk evidence.",
+          "The active window is very thin for a collaboration channel, so a red suggestion would likely feel too strong.",
+          "The summary sounds calmer than the underlying unresolved risk counts.",
+          "The current persisted channel state looks stronger than this first-pass review would suggest."
+        ]
+      }
+    }
+  ]
+}

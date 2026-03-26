@@ -6,6 +6,7 @@ vi.mock("../config.js", () => ({
     QUEUE_STALE_CHANNEL_MINUTES: 10,
     QUEUE_STALE_ANALYSIS_MINUTES: 15,
     QUEUE_STALE_SCAN_LIMIT: 50,
+    FATHOM_HISTORICAL_SYNC_STALE_MINUTES: 45,
     LOW_SIGNAL_CHANNEL_NAMES: ["general", "random", "social", "watercooler"],
   },
 }));
@@ -22,7 +23,10 @@ vi.mock("../utils/logger.js", () => ({
 }));
 
 vi.mock("../db/queries.js", () => ({
+  releaseStaleMeetingDigestClaims: vi.fn().mockResolvedValue([]),
   getRecoverableChannels: vi.fn().mockResolvedValue([]),
+  getRecoverableTieredChannels: vi.fn().mockResolvedValue([]),
+  getStaleFathomHistoricalSyncs: vi.fn().mockResolvedValue([]),
   markStaleBackfillMessagesSkipped: vi.fn().mockResolvedValue([]),
   getStaleAnalysisCandidates: vi.fn().mockResolvedValue([]),
   getFollowUpRule: vi.fn().mockResolvedValue(null),
@@ -47,11 +51,21 @@ vi.mock("../queue/boss.js", () => ({
     workersRegistered: true,
   }),
   enqueueBackfill: vi.fn().mockResolvedValue("job-backfill-recovery"),
+  enqueueBackfillTier1: vi.fn().mockResolvedValue("job-tiered-recovery"),
   enqueueSummaryRollup: vi.fn().mockResolvedValue("job-rollup-recovery"),
+}));
+
+vi.mock("./fathomHistoricalSyncRecovery.js", () => ({
+  recoverHistoricalSyncLease: vi.fn().mockResolvedValue({
+    recovered: false,
+    connection: null,
+    error: null,
+  }),
 }));
 
 const db = await import("../db/queries.js");
 const bossModule = await import("../queue/boss.js");
+const fathomRecovery = await import("./fathomHistoricalSyncRecovery.js");
 const { runQueueMaintenanceOnce } = await import("./queueMaintenance.js");
 
 function makeFailedJob(id: string) {
@@ -99,6 +113,12 @@ describe("runQueueMaintenanceOnce", () => {
       workersRegistered: true,
     } as never);
     vi.mocked(bossModule.getQueue).mockReturnValue(fakeBoss as never);
+    vi.mocked(db.getStaleFathomHistoricalSyncs).mockResolvedValue([]);
+    vi.mocked(fathomRecovery.recoverHistoricalSyncLease).mockResolvedValue({
+      recovered: false,
+      connection: null,
+      error: null,
+    } as never);
     fakeBoss.findJobs.mockImplementation(async (queueName: string) => (
       queueName === "summary.rollup" ? [makeFailedJob("failed-job-1")] : []
     ));
@@ -161,5 +181,29 @@ describe("runQueueMaintenanceOnce", () => {
     );
 
     await expect(runQueueMaintenanceOnce()).resolves.toBeUndefined();
+  });
+
+  it("requeues stale Fathom historical sync leases during maintenance", async () => {
+    vi.mocked(db.getStaleFathomHistoricalSyncs).mockResolvedValue([
+      {
+        workspace_id: "default",
+        historical_sync_status: "running",
+      },
+    ] as never);
+    vi.mocked(fathomRecovery.recoverHistoricalSyncLease).mockResolvedValue({
+      recovered: true,
+      connection: null,
+      error: null,
+    } as never);
+
+    await runQueueMaintenanceOnce();
+
+    expect(vi.mocked(fathomRecovery.recoverHistoricalSyncLease)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "default",
+        requestedBy: "maintenance",
+        reason: "queue_maintenance",
+      }),
+    );
   });
 });

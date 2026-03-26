@@ -9,6 +9,7 @@ import type {
 
 export type ChannelRiskSignal = "stable" | "elevated" | "escalating";
 export type ChannelRiskHealth = "healthy" | "attention" | "at-risk";
+export type ChannelRiskEvidenceTier = "signal" | "pattern" | "confirmed";
 
 export interface ChannelRiskCounts {
   analysisWindowDays: number;
@@ -33,6 +34,8 @@ export interface ChannelRiskCounts {
   contextOnlyMessageCount: number;
   ignoredMessageCount: number;
   inflightMessageCount: number;
+  openMeetingObligationCount?: number;
+  overdueMeetingObligationCount?: number;
 }
 
 export interface ChannelRiskSnapshot {
@@ -47,11 +50,47 @@ export interface ChannelRiskState {
   signal: ChannelRiskSignal;
   health: ChannelRiskHealth;
   signalConfidence: number;
+  signalEvidenceTier: ChannelRiskEvidenceTier;
   negativeRatio: number;
   effectiveChannelMode: ChannelMode;
   riskDrivers: RiskDriver[];
   attentionSummary: AttentionSummary;
   messageDispositionCounts: MessageDispositionCounts;
+}
+
+function hardRiskEvidencePresent(
+  snapshot: ChannelRiskSnapshot,
+  counts: ChannelRiskCounts,
+): boolean {
+  return (
+    counts.highSeverityAlertCount >= 1 ||
+    counts.highRiskMessageCount >= 1 ||
+    counts.escalatedThreadCount >= 1 ||
+    counts.blockedThreadCount >= 1 ||
+    counts.criticalAutomationIncident24hCount >= 1 ||
+    counts.criticalAutomationIncidentCount >= 1 ||
+    snapshot.highRiskCount >= 1
+  );
+}
+
+function stabilizationMomentum(counts: ChannelRiskCounts): 0 | 1 | 2 {
+  if (
+    counts.resolutionSignalCount >= 3 ||
+    (counts.resolutionSignalCount >= 2 && counts.decisionSignalCount >= 1) ||
+    (counts.resolutionSignalCount >= 1 && counts.decisionSignalCount >= 3)
+  ) {
+    return 2;
+  }
+
+  if (
+    counts.resolutionSignalCount >= 2 ||
+    counts.decisionSignalCount >= 3 ||
+    (counts.resolutionSignalCount >= 1 && counts.decisionSignalCount >= 2)
+  ) {
+    return 1;
+  }
+
+  return 0;
 }
 
 function parseCount(value: number | string | null | undefined): number {
@@ -64,6 +103,10 @@ function parseCount(value: number | string | null | undefined): number {
 }
 
 export function computeNegativeRatio(snapshot: ChannelRiskSnapshot): number {
+  if (snapshot.totalAnalyzed <= 0) {
+    return 0;
+  }
+
   const total = Object.values(snapshot.emotionDistribution).reduce(
     (sum, count) => sum + count,
     0,
@@ -80,39 +123,79 @@ export function computeNegativeRatio(snapshot: ChannelRiskSnapshot): number {
 function humanPressure(
   snapshot: ChannelRiskSnapshot,
   counts: ChannelRiskCounts,
+  effectiveChannelMode: ChannelMode,
 ): 0 | 1 | 2 {
   const negativeRatio = computeNegativeRatio(snapshot);
   const severeThreadPressure =
     counts.escalatedThreadCount >= 1 ||
     counts.blockedThreadCount >= 2 ||
     counts.riskyThreadCount >= 2;
+  const collaborationAlertEscalation =
+    counts.highSeverityAlertCount >= 3 ||
+    (counts.highSeverityAlertCount >= 1 &&
+      (
+        counts.highRiskMessageCount >= 1 ||
+        counts.escalatedThreadCount >= 1 ||
+        counts.blockedThreadCount >= 1 ||
+        counts.humanRiskSignalCount >= 4 ||
+        snapshot.highRiskCount >= 3 ||
+        negativeRatio > 0.3
+      ));
+  const severeAlertPressure =
+    effectiveChannelMode === "collaboration"
+      ? collaborationAlertEscalation
+      : counts.highSeverityAlertCount >= 1;
+  const stabilizingSignals = stabilizationMomentum(counts);
+  const hardRiskEvidence = hardRiskEvidencePresent(snapshot, counts);
+
+  let pressure: 0 | 1 | 2 = 0;
+
+  // At-risk (pressure=2) requires CORROBORATION: at least 2 independent severe signals.
+  // A single high-risk message should NOT make a channel at-risk (false red is the most damaging failure).
+  const severeSignals = [
+    severeAlertPressure,
+    counts.highRiskMessageCount >= 2, // raised from 1 → 2 (single message insufficient)
+    counts.flaggedMessageCount >= 8,  // raised from 5 → 8 (busy channels hit 5 normally)
+    counts.humanRiskSignalCount >= 5, // raised from 4 → 5
+    severeThreadPressure,
+    snapshot.highRiskCount >= 3,
+    negativeRatio > 0.35,             // raised from 0.30 → 0.35
+  ].filter(Boolean).length;
 
   if (
-    counts.highSeverityAlertCount >= 1 ||
-    counts.highRiskMessageCount >= 1 ||
-    counts.flaggedMessageCount >= 5 ||
-    counts.humanRiskSignalCount >= 4 ||
-    severeThreadPressure ||
-    snapshot.highRiskCount >= 3 ||
-    negativeRatio > 0.3
+    severeSignals >= 2 || // requires at least 2 corroborating signals
+    (severeAlertPressure && hardRiskEvidence) // OR: severe alert + hard evidence
   ) {
-    return 2;
-  }
-
-  if (
+    pressure = 2;
+  } else if (
     counts.openAlertCount >= 1 ||
+    counts.highSeverityAlertCount >= 1 ||
     counts.blockedThreadCount >= 1 ||
     counts.riskyThreadCount >= 1 ||
     counts.attentionThreadCount >= 2 ||
     counts.flaggedMessageCount >= 2 ||
     counts.humanRiskSignalCount >= 2 ||
+    (counts.overdueMeetingObligationCount ?? 0) >= 3 ||
     snapshot.highRiskCount >= 1 ||
     negativeRatio > 0.15
   ) {
-    return 1;
+    pressure = 1;
   }
 
-  return 0;
+  if (
+    effectiveChannelMode === "collaboration" &&
+    pressure > 0 &&
+    stabilizingSignals > 0 &&
+    !hardRiskEvidence
+  ) {
+    if (pressure === 2) {
+      pressure = 1;
+    } else if (pressure === 1 && stabilizingSignals >= 2) {
+      pressure = 0;
+    }
+  }
+
+  return pressure;
 }
 
 function operationalPressure(counts: ChannelRiskCounts): 0 | 1 | 2 {
@@ -140,8 +223,12 @@ function operationalPressure(counts: ChannelRiskCounts): 0 | 1 | 2 {
 export function deriveChannelSignal(
   snapshot: ChannelRiskSnapshot,
   counts: ChannelRiskCounts,
+  effectiveChannelMode: ChannelMode = "collaboration",
 ): ChannelRiskSignal {
-  const pressure = Math.max(humanPressure(snapshot, counts), operationalPressure(counts));
+  const pressure = Math.max(
+    humanPressure(snapshot, counts, effectiveChannelMode),
+    operationalPressure(counts),
+  );
   if (pressure >= 2) {
     return "escalating";
   }
@@ -200,6 +287,12 @@ export function deriveChannelSignalConfidence(
     base = Math.max(base, 0.66);
   }
 
+  const stabilizingSignals = stabilizationMomentum(counts);
+  const hardRiskEvidence = hardRiskEvidencePresent(snapshot, counts);
+  if (stabilizingSignals > 0 && !hardRiskEvidence) {
+    base -= stabilizingSignals >= 2 ? 0.1 : 0.05;
+  }
+
   const total = Object.values(snapshot.emotionDistribution).reduce(
     (sum, count) => sum + count,
     0,
@@ -222,6 +315,18 @@ export function deriveChannelSignalConfidence(
   }
   if (counts.escalatedThreadCount > 0 || counts.blockedThreadCount > 0) {
     base = Math.min(base, 0.78);
+  }
+
+  if (
+    stabilizingSignals > 0 &&
+    !hardRiskEvidence &&
+    (
+      counts.humanRiskSignalCount > 0 ||
+      counts.riskyThreadCount > 0 ||
+      counts.openAlertCount > 0
+    )
+  ) {
+    base = Math.min(base, stabilizingSignals >= 2 ? 0.58 : 0.64);
   }
 
   const negativeRatio = computeNegativeRatio(snapshot);
@@ -253,6 +358,82 @@ export function deriveChannelSignalConfidence(
   }
 
   return Math.max(0.35, Math.min(0.93, base));
+}
+
+export function deriveChannelEvidenceTier(
+  snapshot: ChannelRiskSnapshot,
+  counts: ChannelRiskCounts,
+): ChannelRiskEvidenceTier {
+  const totalWindowMessages = Math.max(0, counts.totalMessageCount);
+  const settledCount = snapshot.totalAnalyzed + counts.skippedMessageCount;
+  const settledRatio = totalWindowMessages > 0 ? settledCount / totalWindowMessages : 1;
+  const confidence = deriveChannelSignalConfidence(snapshot, counts);
+  const negativeRatio = computeNegativeRatio(snapshot);
+
+  let corroboratingSources = 0;
+  if (counts.openAlertCount > 0 || counts.highSeverityAlertCount > 0) {
+    corroboratingSources += 1;
+  }
+  if (
+    counts.attentionThreadCount > 0 ||
+    counts.riskyThreadCount > 0 ||
+    counts.blockedThreadCount > 0 ||
+    counts.escalatedThreadCount > 0
+  ) {
+    corroboratingSources += 1;
+  }
+  if (counts.humanRiskSignalCount > 0) {
+    corroboratingSources += 1;
+  }
+  if (
+    counts.flaggedMessageCount > 0 ||
+    counts.highRiskMessageCount > 0 ||
+    snapshot.highRiskCount > 0 ||
+    negativeRatio > 0.15
+  ) {
+    corroboratingSources += 1;
+  }
+  if (
+    counts.automationIncidentCount > 0 ||
+    counts.criticalAutomationIncidentCount > 0 ||
+    counts.automationIncident24hCount > 0 ||
+    counts.criticalAutomationIncident24hCount > 0
+  ) {
+    corroboratingSources += 1;
+  }
+  if (
+    (counts.openMeetingObligationCount ?? 0) > 0 ||
+    (counts.overdueMeetingObligationCount ?? 0) > 0
+  ) {
+    corroboratingSources += 1;
+  }
+
+  const hardEvidence =
+    counts.highSeverityAlertCount >= 2 ||
+    counts.highRiskMessageCount >= 1 ||
+    counts.blockedThreadCount >= 1 ||
+    counts.escalatedThreadCount >= 1 ||
+    counts.criticalAutomationIncident24hCount >= 1 ||
+    counts.criticalAutomationIncidentCount >= 1;
+
+  if (
+    hardEvidence ||
+    (corroboratingSources >= 3 && settledRatio >= 0.6) ||
+    (corroboratingSources >= 2 && confidence >= 0.78)
+  ) {
+    return "confirmed";
+  }
+
+  if (
+    corroboratingSources >= 2 ||
+    confidence >= 0.66 ||
+    settledRatio >= 0.6 ||
+    snapshot.totalAnalyzed >= 5
+  ) {
+    return "pattern";
+  }
+
+  return "signal";
 }
 
 function buildMessageDispositionCounts(
@@ -432,6 +613,7 @@ export function buildChannelRiskState(
   row?: ChannelHealthCountsRow | null,
   options?: {
     effectiveChannelMode?: ChannelMode | null;
+    meetingObligationCounts?: { openCount: number; overdueCount: number };
   },
 ): ChannelRiskState {
   const healthCounts: ChannelRiskCounts = {
@@ -457,6 +639,8 @@ export function buildChannelRiskState(
     contextOnlyMessageCount: parseCount(row?.context_only_message_count),
     ignoredMessageCount: parseCount(row?.ignored_message_count),
     inflightMessageCount: parseCount(row?.inflight_message_count),
+    openMeetingObligationCount: options?.meetingObligationCounts?.openCount ?? 0,
+    overdueMeetingObligationCount: options?.meetingObligationCounts?.overdueCount ?? 0,
   };
 
   const sentimentSnapshot: ChannelRiskSnapshot = {
@@ -473,7 +657,12 @@ export function buildChannelRiskState(
     },
   };
 
-  const signal = deriveChannelSignal(sentimentSnapshot, healthCounts);
+  const effectiveChannelMode = options?.effectiveChannelMode ?? "collaboration";
+  const signal = deriveChannelSignal(
+    sentimentSnapshot,
+    healthCounts,
+    effectiveChannelMode,
+  );
   const riskDrivers = buildRiskDrivers(sentimentSnapshot, healthCounts);
   return {
     healthCounts,
@@ -484,8 +673,12 @@ export function buildChannelRiskState(
       sentimentSnapshot,
       healthCounts,
     ),
+    signalEvidenceTier: deriveChannelEvidenceTier(
+      sentimentSnapshot,
+      healthCounts,
+    ),
     negativeRatio: computeNegativeRatio(sentimentSnapshot),
-    effectiveChannelMode: options?.effectiveChannelMode ?? "collaboration",
+    effectiveChannelMode,
     riskDrivers,
     attentionSummary: buildAttentionSummary(signal, healthCounts, riskDrivers),
     messageDispositionCounts: buildMessageDispositionCounts(

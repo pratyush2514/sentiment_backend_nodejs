@@ -121,6 +121,9 @@ vi.mock("./backfillSummary.js", () => ({
     keyDecisions: [],
     messageCount: 1,
     summaryType: "llm",
+    summaryArtifactId: "artifact-1",
+    completenessStatus: "complete",
+    degradedReasons: [],
   }),
 }));
 
@@ -128,8 +131,23 @@ vi.mock("./canonicalMessageSignals.js", () => ({
   persistCanonicalMessageSignal: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("./intelligenceTruth.js", () => ({
+  insertContextDocumentWithArtifact: vi.fn().mockResolvedValue(undefined),
+  startBackfillRun: vi.fn().mockResolvedValue({ backfillRunId: "backfill-run-1" }),
+  updateBackfillRun: vi.fn().mockResolvedValue(undefined),
+  completeBackfillRun: vi.fn().mockResolvedValue(undefined),
+  failBackfillRun: vi.fn().mockResolvedValue(undefined),
+  recordIntelligenceDegradation: vi.fn().mockResolvedValue(undefined),
+  recordMessageTruthSuppressed: vi.fn().mockResolvedValue("skipped"),
+  recordSummaryArtifact: vi.fn().mockResolvedValue({
+    summaryArtifactId: "artifact-1",
+    readiness: "partial",
+  }),
+}));
+
 const db = await import("../db/queries.js");
 const boss = await import("../queue/boss.js");
+const intelligenceTruth = await import("./intelligenceTruth.js");
 const { materializeBackfillSummary } = await import("./backfillSummary.js");
 const { runBackfill } = await import("./backfill.js");
 
@@ -168,8 +186,12 @@ describe("runBackfill", () => {
       return {
         summary: "The team is asking for Mixpanel access and waiting on ownership.",
         keyDecisions: [],
+        summaryFacts: [],
         messageCount: 1,
         summaryType: "llm",
+        summaryArtifactId: "artifact-1",
+        completenessStatus: "complete",
+        degradedReasons: [],
       };
     });
     vi.mocked(boss.enqueueSummaryRollup).mockImplementation(async () => {
@@ -200,5 +222,16 @@ describe("runBackfill", () => {
 
     expect(order.indexOf("normalize")).toBeGreaterThan(order.indexOf("status:initializing"));
     expect(order.indexOf("normalize")).toBeLessThan(order.indexOf("status:ready"));
+  });
+
+  it("does not fail the channel when thread seed enqueueing fails after bootstrap is complete", async () => {
+    vi.mocked(boss.enqueueSummaryRollup).mockRejectedValue(new Error("Queue not started"));
+
+    await expect(runBackfill("default", "C123ABC", "test")).resolves.toBeUndefined();
+
+    expect(db.updateChannelStatus).toHaveBeenCalledWith("default", "C123ABC", "ready");
+    expect(db.updateChannelStatus).not.toHaveBeenCalledWith("default", "C123ABC", "failed");
+    expect(intelligenceTruth.completeBackfillRun).toHaveBeenCalled();
+    expect(intelligenceTruth.failBackfillRun).not.toHaveBeenCalled();
   });
 });

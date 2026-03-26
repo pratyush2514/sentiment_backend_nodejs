@@ -24,6 +24,8 @@ vi.mock("../../db/queries.js", () => ({
   getEffectiveAnalysisWindowDays: vi.fn().mockResolvedValue(7),
   getMessagesSinceTs: vi.fn().mockResolvedValue([]),
   getMessagesInWindow: vi.fn().mockResolvedValue([]),
+  getActiveThreadsSinceTs: vi.fn().mockResolvedValue([]),
+  getThreadInsightsBatch: vi.fn().mockResolvedValue([]),
   getChannel: vi.fn().mockResolvedValue({
     id: "channel-1",
     workspace_id: "default",
@@ -97,6 +99,19 @@ vi.mock("../../services/embeddingProvider.js", () => ({
 
 vi.mock("../../services/costEstimator.js", () => ({
   estimateCost: vi.fn().mockReturnValue(0.001),
+}));
+
+const insertContextDocumentWithArtifact = vi.fn();
+const recordSummaryArtifact = vi.fn().mockResolvedValue({
+  summaryArtifactId: "artifact-1",
+  readiness: "ready",
+});
+const recordIntelligenceDegradation = vi.fn().mockResolvedValue(undefined);
+
+vi.mock("../../services/intelligenceTruth.js", () => ({
+  insertContextDocumentWithArtifact,
+  recordSummaryArtifact,
+  recordIntelligenceDegradation,
 }));
 
 const db = await import("../../db/queries.js");
@@ -185,6 +200,9 @@ beforeEach(() => {
   ] as never);
   vi.mocked(db.getRelatedIncidentMentions).mockResolvedValue([] as never);
   vi.mocked(createEmbeddingProvider).mockReturnValue(null);
+  vi.mocked(insertContextDocumentWithArtifact).mockImplementation(async (row) => {
+    await db.insertContextDocument(row as never);
+  });
 });
 
 describe("handleSummaryRollup", () => {
@@ -202,11 +220,14 @@ describe("handleSummaryRollup", () => {
     ] as never);
     vi.mocked(db.getChannelState).mockResolvedValue({
       running_summary: "old summary",
+      live_summary: "",
+      live_summary_source_ts_end: null,
       key_decisions_json: [],
     } as never);
     vi.mocked(channelRollup).mockResolvedValue({
       summary: "Updated summary of discussion",
       keyDecisions: ["decision1"],
+      summaryFacts: [],
       tokenCount: 100,
       raw: { content: "", model: "gpt-4o-mini", promptTokens: 200, completionTokens: 100 },
     });
@@ -222,8 +243,13 @@ describe("handleSummaryRollup", () => {
     expect(db.upsertChannelState).toHaveBeenCalledWith(
       "default", "C123",
       expect.objectContaining({
-        running_summary: "Updated summary of discussion",
-        key_decisions_json: ["decision1"],
+        live_summary: "Updated summary of discussion",
+      }),
+    );
+    expect(recordSummaryArtifact).toHaveBeenCalledWith(
+      expect.objectContaining({
+        updateChannelTruth: false,
+        summaryFacts: [],
       }),
     );
     expect(db.resetRollupState).toHaveBeenCalled();
@@ -241,6 +267,7 @@ describe("handleSummaryRollup", () => {
     vi.mocked(threadRollup).mockResolvedValue({
       summary: "Thread about feature X",
       keyDecisions: [],
+      summaryFacts: [],
       primaryIssue: "Feature X is blocked on a dependency.",
       threadState: "blocked",
       emotionalTemperature: "watch",
@@ -275,6 +302,8 @@ describe("handleSummaryRollup", () => {
     ] as never);
     vi.mocked(db.getChannelState).mockResolvedValue({
       running_summary: "",
+      live_summary: "",
+      live_summary_source_ts_end: null,
       key_decisions_json: [],
     } as never);
     vi.mocked(channelRollup).mockResolvedValue(null);
@@ -290,11 +319,14 @@ describe("handleSummaryRollup", () => {
     ] as never);
     vi.mocked(db.getChannelState).mockResolvedValue({
       running_summary: "",
+      live_summary: "",
+      live_summary_source_ts_end: null,
       key_decisions_json: [],
     } as never);
     vi.mocked(channelRollup).mockResolvedValue({
       summary: "Summary",
       keyDecisions: [],
+      summaryFacts: [],
       tokenCount: 50,
       raw: { content: "", model: "gpt-4o-mini", promptTokens: 100, completionTokens: 50 },
     });
@@ -325,6 +357,7 @@ describe("handleSummaryRollup", () => {
     vi.mocked(channelRollup).mockResolvedValue({
       summary: "Summary",
       keyDecisions: [],
+      summaryFacts: [],
       tokenCount: 50,
       raw: { content: "", model: "gpt-4o-mini", promptTokens: 100, completionTokens: 50 },
     });

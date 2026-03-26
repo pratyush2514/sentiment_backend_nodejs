@@ -24,7 +24,7 @@ export function buildThreadRollupPrompt(context: ThreadRollupContext): {
       const time = Number.isFinite(parsed)
         ? new Date(parsed * 1000).toISOString().slice(11, 16)
         : m.ts;
-      return `[${time}] [${m.displayName ?? m.userId}] ${resolveMentionsInText(m.text, userMap)}`;
+      return `[${time}] [ts=${m.ts}] [${m.displayName ?? m.userId}] ${resolveMentionsInText(m.text, userMap)}`;
     })
     .join("\n");
 
@@ -34,13 +34,9 @@ export function buildThreadRollupPrompt(context: ThreadRollupContext): {
 ${context.channelSummary || "No channel summary is available yet."}
 
 ## Task
-Write a concise 2-4 sentence summary of this thread focused on what a manager needs to act on.
-Include:
-- the core issue or question being discussed,
-- the current state: resolved, in-progress, stalled, or escalating,
-- any concrete decisions, owners, or follow-up actions with deadlines if mentioned.
-Use single quotes around key phrases that deserve attention (e.g., the issue was described as 'blocking the release').
-Do not mention that context was missing or that this is a rollup.
+Extract only facts that are directly supported by the provided thread messages.
+Do not output a freeform narrative paragraph as the primary artifact; the backend will generate the visible summary from your supported fields.
+Every decisive field must be grounded in exact message timestamps copied from the messages above.
 
 Also list any questions in the thread that have not received a visible answer. If all questions are answered, return an empty array.
 
@@ -70,10 +66,15 @@ For each item in "crucial_moments", "surfacePriority" must use the same labels a
 
 ## Output (JSON only)
 {
-  "summary": "thread summary...",
-  "new_decisions": ["decision1"],
+  "new_decisions": [
+    {
+      "text": "decision1",
+      "evidence_ts": ["1234567890.123456"]
+    }
+  ],
   "open_questions": ["question that has no visible answer"],
   "primary_issue": "short plain-language description",
+  "primary_issue_message_ts": "1234567890.123456",
   "thread_state": "investigating",
   "emotional_temperature": "watch",
   "operational_risk": "medium",

@@ -3,6 +3,7 @@ import * as db from "../db/queries.js";
 import { logger } from "../utils/logger.js";
 import { emitFollowUpAlert } from "./followUpEvents.js";
 import { clearFollowUpReminderDms } from "./followUpReminderDms.js";
+import { backPropagateFollowUpResolution } from "./meetingObligationBridge.js";
 import { buildRoleDirectory } from "./roleInference.js";
 import type {
   ConversationType,
@@ -878,6 +879,13 @@ export async function processFollowUpsForMessage(input: {
             responseScope,
           },
         });
+        // Back-propagate to meeting obligation if this follow-up was bridged from a meeting
+        if (config.FATHOM_ENABLED) {
+          const meetingObligationId = await db.getFollowUpItemMeetingObligationId(item.id);
+          if (meetingObligationId) {
+            await backPropagateFollowUpResolution(item.id, meetingObligationId);
+          }
+        }
         emitFollowUpAlert({
           workspaceId,
           channelId,

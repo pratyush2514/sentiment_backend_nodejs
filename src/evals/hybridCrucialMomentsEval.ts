@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 import { classifyMessageTriage, shouldRefreshThreadInsight } from "../services/messageTriage.js";
 import { hybridEvalFixtures } from "./hybridCrucialMoments.fixtures.js";
 

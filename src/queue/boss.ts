@@ -5,7 +5,16 @@ import { markQueueRuntimeState } from "../services/runtimeState.js";
 import { logger } from "../utils/logger.js";
 import { handleLLMAnalyze } from "./handlers/analyzeHandler.js";
 import { handleBackfill } from "./handlers/backfillHandler.js";
+import { handleBackfillTier1 } from "./handlers/backfillTier1Handler.js";
+import { handleBackfillTier2 } from "./handlers/backfillTier2Handler.js";
+import { handleBackfillTier3 } from "./handlers/backfillTier3Handler.js";
 import { handleChannelDiscovery } from "./handlers/channelDiscoveryHandler.js";
+import { handleChannelClassify } from "./handlers/classifyHandler.js";
+import { handleMeetingDigest } from "./handlers/meetingDigestHandler.js";
+import { handleMeetingExtract } from "./handlers/meetingExtractHandler.js";
+import { handleMeetingHistoricalSync } from "./handlers/meetingHistoricalSyncHandler.js";
+import { handleMeetingIngest } from "./handlers/meetingIngestHandler.js";
+import { handleMeetingObligationSync } from "./handlers/meetingObligationSyncHandler.js";
 import { handleMessageIngest } from "./handlers/messageHandler.js";
 import { handleThreadReconcile } from "./handlers/reconcileHandler.js";
 import { handleSummaryRollup } from "./handlers/rollupHandler.js";
@@ -13,12 +22,21 @@ import { handleUserResolve } from "./handlers/userResolveHandler.js";
 import { JOB_NAMES, QUEUE_CONFIG } from "./jobTypes.js";
 import type {
   BackfillJob,
+  BackfillTier1Job,
+  BackfillTier2Job,
+  BackfillTier3Job,
   MessageIngestJob,
   UserResolveJob,
   ThreadReconcileJob,
   LLMAnalyzeJob,
   SummaryRollupJob,
   ChannelDiscoveryJob,
+  MeetingHistoricalSyncJob,
+  MeetingIngestJob,
+  MeetingExtractJob,
+  MeetingDigestJob,
+  MeetingObligationSyncJob,
+  ChannelClassifyJob,
   QueueRuntimeOptions,
 } from "./jobTypes.js";
 
@@ -90,6 +108,22 @@ export async function startQueue(
   await boss.createQueue(JOB_NAMES.LLM_ANALYZE);
   await boss.createQueue(JOB_NAMES.SUMMARY_ROLLUP);
   await boss.createQueue(JOB_NAMES.CHANNEL_DISCOVERY);
+  await boss.createQueue(JOB_NAMES.CHANNEL_CLASSIFY);
+
+  // Tiered backfill queues
+  await boss.createQueue(JOB_NAMES.BACKFILL_TIER1);
+  await boss.createQueue(JOB_NAMES.BACKFILL_TIER2);
+  await boss.createQueue(JOB_NAMES.BACKFILL_TIER3);
+
+  // Fathom meeting pipeline queues
+  if (config.FATHOM_ENABLED) {
+    await boss.createQueue(JOB_NAMES.MEETING_INGEST);
+    await boss.createQueue(JOB_NAMES.MEETING_HISTORICAL_SYNC);
+    await boss.createQueue(JOB_NAMES.MEETING_EXTRACT);
+    await boss.createQueue(JOB_NAMES.MEETING_DIGEST);
+    await boss.createQueue(JOB_NAMES.MEETING_OBLIGATION_SYNC);
+  }
+
   log.info("Queues created");
 
   if (options.registerWorkers !== false) {
@@ -148,6 +182,84 @@ export async function startQueue(
       },
       handleChannelDiscovery,
     );
+
+    await boss.work<ChannelClassifyJob>(
+      JOB_NAMES.CHANNEL_CLASSIFY,
+      {
+        localConcurrency: QUEUE_CONFIG[JOB_NAMES.CHANNEL_CLASSIFY].localConcurrency,
+      },
+      handleChannelClassify,
+    );
+
+    // Tiered backfill workers
+    await boss.work<BackfillTier1Job>(
+      JOB_NAMES.BACKFILL_TIER1,
+      {
+        localConcurrency: QUEUE_CONFIG[JOB_NAMES.BACKFILL_TIER1].localConcurrency,
+      },
+      handleBackfillTier1,
+    );
+
+    await boss.work<BackfillTier2Job>(
+      JOB_NAMES.BACKFILL_TIER2,
+      {
+        localConcurrency: QUEUE_CONFIG[JOB_NAMES.BACKFILL_TIER2].localConcurrency,
+      },
+      handleBackfillTier2,
+    );
+
+    await boss.work<BackfillTier3Job>(
+      JOB_NAMES.BACKFILL_TIER3,
+      {
+        localConcurrency: QUEUE_CONFIG[JOB_NAMES.BACKFILL_TIER3].localConcurrency,
+      },
+      handleBackfillTier3,
+    );
+
+    // Meeting pipeline workers (only when Fathom is enabled)
+    if (config.FATHOM_ENABLED) {
+      await boss.work<MeetingIngestJob>(
+        JOB_NAMES.MEETING_INGEST,
+        {
+          localConcurrency: QUEUE_CONFIG[JOB_NAMES.MEETING_INGEST].localConcurrency,
+        },
+        handleMeetingIngest,
+      );
+
+      await boss.work<MeetingHistoricalSyncJob>(
+        JOB_NAMES.MEETING_HISTORICAL_SYNC,
+        {
+          localConcurrency: QUEUE_CONFIG[JOB_NAMES.MEETING_HISTORICAL_SYNC].localConcurrency,
+        },
+        handleMeetingHistoricalSync,
+      );
+
+      await boss.work<MeetingExtractJob>(
+        JOB_NAMES.MEETING_EXTRACT,
+        {
+          localConcurrency: QUEUE_CONFIG[JOB_NAMES.MEETING_EXTRACT].localConcurrency,
+        },
+        handleMeetingExtract,
+      );
+
+      await boss.work<MeetingDigestJob>(
+        JOB_NAMES.MEETING_DIGEST,
+        {
+          localConcurrency: QUEUE_CONFIG[JOB_NAMES.MEETING_DIGEST].localConcurrency,
+        },
+        handleMeetingDigest,
+      );
+
+      await boss.work<MeetingObligationSyncJob>(
+        JOB_NAMES.MEETING_OBLIGATION_SYNC,
+        {
+          localConcurrency: QUEUE_CONFIG[JOB_NAMES.MEETING_OBLIGATION_SYNC].localConcurrency,
+        },
+        handleMeetingObligationSync,
+      );
+
+      log.info("Meeting pipeline workers registered (Fathom enabled)");
+    }
 
     queueRuntimeState = {
       started: true,
@@ -377,6 +489,30 @@ export async function enqueueChannelDiscovery(
   return jobId;
 }
 
+export async function enqueueChannelClassify(
+  workspaceId: string,
+  channelId: string,
+  source: ChannelClassifyJob["source"],
+): Promise<string | null> {
+  if (!boss) throw new Error("Queue not started");
+
+  const jobId = await boss.send(JOB_NAMES.CHANNEL_CLASSIFY, {
+    workspaceId,
+    channelId,
+    source,
+  }, {
+    singletonKey: `classify:${workspaceId}:${channelId}`,
+    singletonSeconds: 600, // 10 min — don't re-classify the same channel within 10 min
+    retryLimit: QUEUE_CONFIG[JOB_NAMES.CHANNEL_CLASSIFY].retryLimit,
+    retryDelay: QUEUE_CONFIG[JOB_NAMES.CHANNEL_CLASSIFY].retryDelay,
+    retryBackoff: QUEUE_CONFIG[JOB_NAMES.CHANNEL_CLASSIFY].retryBackoff,
+    expireInSeconds: QUEUE_CONFIG[JOB_NAMES.CHANNEL_CLASSIFY].expireInSeconds,
+  });
+
+  log.info({ jobId, workspaceId, channelId, source }, "Channel classify job enqueued");
+  return jobId;
+}
+
 export async function purgeAllJobs(): Promise<number> {
   if (!boss) throw new Error("Queue not started");
 
@@ -440,4 +576,170 @@ export function getQueueRuntimeState(): {
   workersRegistered: boolean;
 } {
   return { ...queueRuntimeState };
+}
+
+// ─── Tiered Backfill Enqueue Helpers ─────────────────────────────────────────
+
+export async function enqueueBackfillTier1(
+  workspaceId: string,
+  channelId: string,
+  reason: string,
+): Promise<string | null> {
+  if (!boss) throw new Error("Queue not started");
+
+  const jobId = await boss.send(JOB_NAMES.BACKFILL_TIER1, {
+    workspaceId,
+    channelId,
+    reason,
+  }, {
+    singletonKey: `tier1:${workspaceId}:${channelId}`,
+    retryLimit: QUEUE_CONFIG[JOB_NAMES.BACKFILL_TIER1].retryLimit,
+    retryDelay: QUEUE_CONFIG[JOB_NAMES.BACKFILL_TIER1].retryDelay,
+    retryBackoff: QUEUE_CONFIG[JOB_NAMES.BACKFILL_TIER1].retryBackoff,
+    expireInSeconds: QUEUE_CONFIG[JOB_NAMES.BACKFILL_TIER1].expireInSeconds,
+  });
+
+  log.info({ jobId, channelId, reason }, "Backfill tier 1 job enqueued");
+  return jobId;
+}
+
+export async function enqueueBackfillTier2(
+  workspaceId: string,
+  channelId: string,
+  backfillRunId: string,
+  reason: string,
+): Promise<string | null> {
+  if (!boss) throw new Error("Queue not started");
+
+  const jobId = await boss.send(JOB_NAMES.BACKFILL_TIER2, {
+    workspaceId,
+    channelId,
+    backfillRunId,
+    reason,
+  }, {
+    retryLimit: QUEUE_CONFIG[JOB_NAMES.BACKFILL_TIER2].retryLimit,
+    retryDelay: QUEUE_CONFIG[JOB_NAMES.BACKFILL_TIER2].retryDelay,
+    retryBackoff: QUEUE_CONFIG[JOB_NAMES.BACKFILL_TIER2].retryBackoff,
+    expireInSeconds: QUEUE_CONFIG[JOB_NAMES.BACKFILL_TIER2].expireInSeconds,
+  });
+
+  log.info({ jobId, channelId, backfillRunId, reason }, "Backfill tier 2 job enqueued");
+  return jobId;
+}
+
+export async function enqueueBackfillTier3(
+  workspaceId: string,
+  channelId: string,
+  backfillRunId: string,
+  reason: string,
+  tier2CoverageOldestTs: string | null,
+): Promise<string | null> {
+  if (!boss) throw new Error("Queue not started");
+
+  const jobId = await boss.send(JOB_NAMES.BACKFILL_TIER3, {
+    workspaceId,
+    channelId,
+    backfillRunId,
+    reason,
+    tier2CoverageOldestTs,
+  }, {
+    singletonKey: `tier3:${workspaceId}:${channelId}`,
+    retryLimit: QUEUE_CONFIG[JOB_NAMES.BACKFILL_TIER3].retryLimit,
+    retryDelay: QUEUE_CONFIG[JOB_NAMES.BACKFILL_TIER3].retryDelay,
+    retryBackoff: QUEUE_CONFIG[JOB_NAMES.BACKFILL_TIER3].retryBackoff,
+    expireInSeconds: QUEUE_CONFIG[JOB_NAMES.BACKFILL_TIER3].expireInSeconds,
+  });
+
+  log.info({ jobId, channelId, backfillRunId, reason }, "Backfill tier 3 job enqueued");
+  return jobId;
+}
+
+// ─── Meeting Pipeline Enqueue Helpers ────────────────────────────────────────
+
+export async function enqueueMeetingIngest(
+  data: MeetingIngestJob,
+): Promise<string | null> {
+  if (!boss) throw new Error("Queue not started");
+
+  const jobId = await boss.send(JOB_NAMES.MEETING_INGEST, data, {
+    singletonKey: `meeting-ingest:${data.workspaceId}:${data.fathomCallId}`,
+    retryLimit: QUEUE_CONFIG[JOB_NAMES.MEETING_INGEST].retryLimit,
+    retryDelay: QUEUE_CONFIG[JOB_NAMES.MEETING_INGEST].retryDelay,
+    retryBackoff: QUEUE_CONFIG[JOB_NAMES.MEETING_INGEST].retryBackoff,
+    expireInSeconds: QUEUE_CONFIG[JOB_NAMES.MEETING_INGEST].expireInSeconds,
+  });
+
+  log.info({ jobId, fathomCallId: data.fathomCallId }, "Meeting ingest job enqueued");
+  return jobId;
+}
+
+export async function enqueueMeetingHistoricalSync(
+  data: MeetingHistoricalSyncJob,
+): Promise<string | null> {
+  if (!boss) throw new Error("Queue not started");
+
+  const jobId = await boss.send(JOB_NAMES.MEETING_HISTORICAL_SYNC, data, {
+    singletonKey: `meeting-historical-sync:${data.workspaceId}`,
+    retryLimit: QUEUE_CONFIG[JOB_NAMES.MEETING_HISTORICAL_SYNC].retryLimit,
+    retryDelay: QUEUE_CONFIG[JOB_NAMES.MEETING_HISTORICAL_SYNC].retryDelay,
+    retryBackoff: QUEUE_CONFIG[JOB_NAMES.MEETING_HISTORICAL_SYNC].retryBackoff,
+    expireInSeconds: QUEUE_CONFIG[JOB_NAMES.MEETING_HISTORICAL_SYNC].expireInSeconds,
+  });
+
+  log.info(
+    { jobId, workspaceId: data.workspaceId, requestedBy: data.requestedBy, windowDays: data.windowDays },
+    "Meeting historical sync job enqueued",
+  );
+  return jobId;
+}
+
+export async function enqueueMeetingExtract(
+  data: MeetingExtractJob,
+): Promise<string | null> {
+  if (!boss) throw new Error("Queue not started");
+
+  const jobId = await boss.send(JOB_NAMES.MEETING_EXTRACT, data, {
+    singletonKey: `meeting-extract:${data.workspaceId}:${data.meetingId}`,
+    retryLimit: QUEUE_CONFIG[JOB_NAMES.MEETING_EXTRACT].retryLimit,
+    retryDelay: QUEUE_CONFIG[JOB_NAMES.MEETING_EXTRACT].retryDelay,
+    retryBackoff: QUEUE_CONFIG[JOB_NAMES.MEETING_EXTRACT].retryBackoff,
+    expireInSeconds: QUEUE_CONFIG[JOB_NAMES.MEETING_EXTRACT].expireInSeconds,
+  });
+
+  log.info({ jobId, meetingId: data.meetingId }, "Meeting extract job enqueued");
+  return jobId;
+}
+
+export async function enqueueMeetingDigest(
+  data: MeetingDigestJob,
+): Promise<string | null> {
+  if (!boss) throw new Error("Queue not started");
+
+  const jobId = await boss.send(JOB_NAMES.MEETING_DIGEST, data, {
+    singletonKey: `meeting-digest:${data.workspaceId}:${data.meetingId}`,
+    retryLimit: QUEUE_CONFIG[JOB_NAMES.MEETING_DIGEST].retryLimit,
+    retryDelay: QUEUE_CONFIG[JOB_NAMES.MEETING_DIGEST].retryDelay,
+    retryBackoff: QUEUE_CONFIG[JOB_NAMES.MEETING_DIGEST].retryBackoff,
+    expireInSeconds: QUEUE_CONFIG[JOB_NAMES.MEETING_DIGEST].expireInSeconds,
+  });
+
+  log.info({ jobId, meetingId: data.meetingId }, "Meeting digest job enqueued");
+  return jobId;
+}
+
+export async function enqueueMeetingObligationSync(
+  data: MeetingObligationSyncJob,
+): Promise<string | null> {
+  if (!boss) throw new Error("Queue not started");
+
+  const jobId = await boss.send(JOB_NAMES.MEETING_OBLIGATION_SYNC, data, {
+    singletonKey: `meeting-obligation-sync:${data.workspaceId}:${data.meetingId}`,
+    retryLimit: QUEUE_CONFIG[JOB_NAMES.MEETING_OBLIGATION_SYNC].retryLimit,
+    retryDelay: QUEUE_CONFIG[JOB_NAMES.MEETING_OBLIGATION_SYNC].retryDelay,
+    retryBackoff: QUEUE_CONFIG[JOB_NAMES.MEETING_OBLIGATION_SYNC].retryBackoff,
+    expireInSeconds: QUEUE_CONFIG[JOB_NAMES.MEETING_OBLIGATION_SYNC].expireInSeconds,
+  });
+
+  log.info({ jobId, meetingId: data.meetingId }, "Meeting obligation sync job enqueued");
+  return jobId;
 }

@@ -10,8 +10,14 @@ import {
 import { estimateCost } from "../../services/costEstimator.js";
 import { createEmbeddingProvider } from "../../services/embeddingProvider.js";
 import { eventBus } from "../../services/eventBus.js";
+import {
+  insertContextDocumentWithArtifact,
+  recordIntelligenceDegradation,
+  recordSummaryArtifact,
+} from "../../services/intelligenceTruth.js";
 import { sanitizeForExternalUse } from "../../services/privacyFilter.js";
 import { channelRollup, threadRollup } from "../../services/summarizer.js";
+import { getProductWindowStartTs } from "../../services/windowPolicy.js";
 import { logger } from "../../utils/logger.js";
 import type { SummaryRollupJob } from "../jobTypes.js";
 import type { Job } from "pg-boss";
@@ -44,16 +50,74 @@ function isSummaryStale(
   return coverageStartTs > earliestTs;
 }
 
-function pickLatestSummaryBaseDoc(
+function pickCanonicalSummaryBaseDoc(
   channelRollupDoc: Awaited<ReturnType<typeof db.getLatestContextDocument>>,
   backfillRollupDoc: Awaited<ReturnType<typeof db.getLatestContextDocument>>,
 ) {
-  if (!channelRollupDoc) return backfillRollupDoc;
-  if (!backfillRollupDoc) return channelRollupDoc;
+  return backfillRollupDoc ?? channelRollupDoc;
+}
 
-  return channelRollupDoc.created_at >= backfillRollupDoc.created_at
-    ? channelRollupDoc
-    : backfillRollupDoc;
+function maxTs(values: Array<string | null | undefined>): string | null {
+  const numeric = values
+    .map((value) => Number.parseFloat(value ?? ""))
+    .filter((value) => Number.isFinite(value));
+
+  if (numeric.length === 0) {
+    return null;
+  }
+
+  return String(Math.max(...numeric));
+}
+
+function buildLiveThreadHighlightMessages(
+  threads: Array<{ thread_ts: string; last_activity: string }>,
+  threadInsights: Awaited<ReturnType<typeof db.getThreadInsightsBatch>>,
+): Array<{
+  userId: string;
+  displayName: string;
+  text: string;
+  ts: string;
+  threadTs: string;
+}> {
+  const insightMap = new Map(
+    threadInsights.map((insight) => [insight.thread_ts, insight]),
+  );
+
+  return threads.flatMap((thread) => {
+    const insight = insightMap.get(thread.thread_ts);
+    if (!insight?.summary) {
+      return [];
+    }
+
+    const ts =
+      insight.last_meaningful_change_ts ??
+      insight.source_ts_end ??
+      thread.thread_ts;
+    const sanitized = sanitizeForExternalUse(insight.summary);
+    const text =
+      sanitized.action === "redacted"
+        ? sanitized.text
+        : sanitized.action === "skipped"
+          ? "[thread update contained sensitive content]"
+          : insight.summary;
+
+    const descriptors = [
+      `Thread update: ${text}`,
+      insight.primary_issue ? `Primary issue: ${insight.primary_issue}` : null,
+      insight.thread_state ? `State: ${insight.thread_state}` : null,
+      insight.operational_risk !== "none"
+        ? `Risk: ${insight.operational_risk}`
+        : null,
+    ].filter(Boolean);
+
+    return [{
+      userId: "thread-insight",
+      displayName: "PulseBoard thread insight",
+      text: descriptors.join(". "),
+      ts,
+      threadTs: thread.thread_ts,
+    }];
+  });
 }
 
 const log = logger.child({ handler: "summaryRollup" });
@@ -98,20 +162,28 @@ async function handleChannelRollup(
 ): Promise<void> {
   const analysisWindowDays = await db.getEffectiveAnalysisWindowDays(workspaceId, channelId);
   const windowStartTs = getAnalysisWindowStartTs(analysisWindowDays);
+  const liveWindowStartTs = getProductWindowStartTs("live") ?? windowStartTs;
   // Find messages since last rollup
-  const [lastChannelDoc, lastBackfillDoc, earliestWindowMessages] = await Promise.all([
+  const [channelState, lastChannelDoc, lastBackfillDoc, earliestWindowMessages] = await Promise.all([
+    db.getChannelState(workspaceId, channelId),
     db.getLatestContextDocument(workspaceId, channelId, "channel_rollup"),
     db.getLatestContextDocument(workspaceId, channelId, "backfill_rollup"),
     db.getMessagesInWindow(workspaceId, channelId, analysisWindowDays, null, 1),
   ]);
-  const baseDoc = pickLatestSummaryBaseDoc(lastChannelDoc, lastBackfillDoc);
+  const baseDoc = pickCanonicalSummaryBaseDoc(lastChannelDoc, lastBackfillDoc);
   const summaryCoverageStartTs = baseDoc?.source_ts_start ?? null;
   const earliestWindowMessageTs = earliestWindowMessages[0]?.ts ?? null;
-  const sinceTs =
+  const activeSummaryEndTs =
     baseDoc?.source_ts_end &&
     Number.parseFloat(baseDoc.source_ts_end) > Number.parseFloat(windowStartTs)
       ? baseDoc.source_ts_end
       : windowStartTs;
+  const sinceTs =
+    maxTs([
+      liveWindowStartTs,
+      activeSummaryEndTs,
+      channelState?.live_summary_source_ts_end ?? null,
+    ]) ?? liveWindowStartTs;
 
   // Staleness check: if the saved summary either reaches outside the window
   // or fails to cover the earliest message inside the current window, rebuild it.
@@ -129,8 +201,19 @@ async function handleChannelRollup(
     return;
   }
 
-  const messages = await db.getMessagesSinceTs(workspaceId, channelId, sinceTs, 200);
-  if (messages.length === 0) {
+  const [messages, recentThreads] = await Promise.all([
+    db.getMessagesSinceTs(workspaceId, channelId, sinceTs, 200),
+    db.getActiveThreadsSinceTs(workspaceId, channelId, sinceTs, 12),
+  ]);
+  const threadInsights = recentThreads.length > 0
+    ? await db.getThreadInsightsBatch(
+      workspaceId,
+      channelId,
+      recentThreads.map((thread) => thread.thread_ts),
+    )
+    : [];
+
+  if (messages.length === 0 && threadInsights.length === 0) {
     log.debug({ channelId }, "No new messages for channel rollup");
     await db.resetRollupState(workspaceId, channelId);
     return;
@@ -152,12 +235,22 @@ async function handleChannelRollup(
         : sanitized.action === "skipped" ? "[message contained sensitive content]"
         : rawText,
       ts: m.ts,
+      threadTs: m.thread_ts,
     };
   });
+  const threadHighlightMessages = buildLiveThreadHighlightMessages(
+    recentThreads,
+    threadInsights,
+  );
+  const combinedMessages = [...enrichedMessages, ...threadHighlightMessages]
+    .sort((left, right) => Number.parseFloat(left.ts) - Number.parseFloat(right.ts));
+  if (combinedMessages.length === 0) {
+    log.debug({ channelId }, "No evidence-backed live rollup inputs after enrichment");
+    await db.resetRollupState(workspaceId, channelId);
+    return;
+  }
 
-  const channelState = await db.getChannelState(workspaceId, channelId);
-  const existingSummary = channelState?.running_summary ?? "";
-  const existingDecisions = channelState?.key_decisions_json ?? [];
+  const existingSummary = channelState?.live_summary ?? "";
   const canonicalState = await resolveCanonicalChannelState(workspaceId, channelId, {
     channelState,
   });
@@ -170,8 +263,8 @@ async function handleChannelRollup(
 
   const result = await channelRollup(
     existingSummary,
-    enrichedMessages,
-    existingDecisions,
+    combinedMessages,
+    [],
     {
       effectiveChannelMode: canonicalState.channelMode.effectiveChannelMode,
       signal: canonicalState.riskState.signal,
@@ -186,11 +279,22 @@ async function handleChannelRollup(
         blocksLocalWork: incident.blocks_local_work,
       })),
     },
+    {
+      summaryStyle: "live",
+    },
   );
   if (!result) {
     log.warn({ channelId }, "Channel rollup LLM call failed");
     throw new Error(`Channel rollup failed for ${channelId}`);
   }
+  if (!result.summary.trim()) {
+    log.debug({ channelId }, "No strongly supported live summary facts survived the rollup");
+    await db.resetRollupState(workspaceId, channelId);
+    return;
+  }
+
+  const liveCoverageStartTs = combinedMessages[0]?.ts ?? sinceTs;
+  const liveCoverageEndTs = combinedMessages[combinedMessages.length - 1]?.ts ?? sinceTs;
 
   // Embed the summary
   const embeddingProvider = createEmbeddingProvider();
@@ -204,32 +308,57 @@ async function handleChannelRollup(
       embeddingTokens = embResult.tokenCount;
     } catch (err) {
       log.warn({ err }, "Embedding failed for channel rollup, storing without embedding");
+      await recordIntelligenceDegradation({
+        workspaceId,
+        channelId,
+        scope: "summary",
+        eventType: "embedding_failed",
+        severity: "medium",
+        details: {
+          summaryKind: "channel_rollup",
+        },
+      });
     }
   }
 
+  const artifact = await recordSummaryArtifact({
+    workspaceId,
+    channelId,
+    kind: "channel_rollup",
+    generationMode: "llm",
+    completenessStatus: "complete",
+    content: result.summary,
+    keyDecisions: result.keyDecisions,
+    summaryFacts: result.summaryFacts,
+    coverageStartTs: liveCoverageStartTs,
+    coverageEndTs: liveCoverageEndTs,
+    candidateMessageCount: combinedMessages.length,
+    includedMessageCount: combinedMessages.length,
+    degradedReasons: embedding === null ? ["embedding_failed"] : [],
+    updateChannelTruth: false,
+  });
+
   // Store context document
-  await db.insertContextDocument({
+  await insertContextDocumentWithArtifact({
     workspaceId,
     channelId,
     docType: "channel_rollup",
     content: result.summary,
     tokenCount: result.tokenCount,
     embedding,
-    sourceTsStart:
-      summaryCoverageStartTs &&
-      Number.parseFloat(summaryCoverageStartTs) >
-        Number.parseFloat(windowStartTs)
-        ? summaryCoverageStartTs
-        : windowStartTs,
-    sourceTsEnd: messages[messages.length - 1].ts,
+    sourceTsStart: liveCoverageStartTs,
+    sourceTsEnd: liveCoverageEndTs,
     sourceThreadTs: null,
-    messageCount: (baseDoc?.message_count ?? 0) + messages.length,
+    messageCount: combinedMessages.length,
+    summaryArtifactId: artifact.summaryArtifactId,
   });
 
   // Update channel state
   await db.upsertChannelState(workspaceId, channelId, {
-    running_summary: result.summary,
-    key_decisions_json: result.keyDecisions,
+    live_summary: result.summary,
+    live_summary_updated_at: new Date(),
+    live_summary_source_ts_start: liveCoverageStartTs,
+    live_summary_source_ts_end: liveCoverageEndTs,
   });
   await persistCanonicalChannelState(workspaceId, channelId, {
     channel: canonicalState.channel,
@@ -249,12 +378,12 @@ async function handleChannelRollup(
 
   eventBus.createAndPublish("rollup_updated", workspaceId, channelId, {
     rollupType: "channel",
-    messagesProcessed: messages.length,
+    messagesProcessed: combinedMessages.length,
   });
 
   log.info({
     channelId,
-    messagesProcessed: messages.length,
+    messagesProcessed: combinedMessages.length,
     summaryTokens: result.tokenCount,
     decisions: result.keyDecisions.length,
   }, "Channel rollup stored");
@@ -286,7 +415,7 @@ async function handleThreadRollup(
     return;
   }
 
-  const baseSummaryDoc = pickLatestSummaryBaseDoc(lastChannelDoc, lastBackfillDoc);
+  const baseSummaryDoc = pickCanonicalSummaryBaseDoc(lastChannelDoc, lastBackfillDoc);
   const channelSummary = isSummaryStale(
     baseSummaryDoc?.source_ts_start ?? null,
     windowStartTs,
@@ -305,6 +434,7 @@ async function handleThreadRollup(
         : sanitized.action === "skipped" ? "[message contained sensitive content]"
         : rawText,
       ts: m.ts,
+      threadTs: m.thread_ts,
     };
   });
 
@@ -326,6 +456,17 @@ async function handleThreadRollup(
       embeddingTokens = embResult.tokenCount;
     } catch (err) {
       log.warn({ err }, "Embedding failed for thread rollup");
+      await recordIntelligenceDegradation({
+        workspaceId,
+        channelId,
+        scope: "summary",
+        eventType: "embedding_failed",
+        severity: "medium",
+        threadTs,
+        details: {
+          summaryKind: "thread_rollup",
+        },
+      });
     }
   }
 
@@ -334,7 +475,24 @@ async function handleThreadRollup(
     openQuestions: result.openQuestions ?? [],
   });
 
-  await db.insertContextDocument({
+  const artifact = await recordSummaryArtifact({
+    workspaceId,
+    channelId,
+    kind: "thread_rollup",
+    generationMode: "llm",
+    completenessStatus: "complete",
+    content: result.summary,
+    keyDecisions: result.keyDecisions,
+    summaryFacts: result.summaryFacts,
+    coverageStartTs: messages[0].ts,
+    coverageEndTs: messages[messages.length - 1].ts,
+    candidateMessageCount: messages.length,
+    includedMessageCount: messages.length,
+    degradedReasons: embedding === null ? ["embedding_failed"] : [],
+    updateChannelTruth: false,
+  });
+
+  await insertContextDocumentWithArtifact({
     workspaceId,
     channelId,
     docType: "thread_rollup",
@@ -345,6 +503,7 @@ async function handleThreadRollup(
     sourceTsEnd: messages[messages.length - 1].ts,
     sourceThreadTs: threadTs,
     messageCount: messages.length,
+    summaryArtifactId: artifact.summaryArtifactId,
   });
 
   await db.upsertThreadInsight({

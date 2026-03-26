@@ -27,7 +27,7 @@ vi.mock("../utils/logger.js", () => ({
 }));
 
 // Import after mocks are set up
-const { requireApiAuth } = await import("./apiAuth.js");
+const { requireApiAuth, requireServiceAuth } = await import("./apiAuth.js");
 
 function createMockReqRes(authHeader?: string, workspaceId?: string) {
   const req = {
@@ -37,6 +37,7 @@ function createMockReqRes(authHeader?: string, workspaceId?: string) {
       return undefined;
     }),
     query: workspaceId ? { workspace_id: workspaceId } : {},
+    body: undefined,
   } as unknown as Request;
 
   const res = {
@@ -112,5 +113,38 @@ describe("requireApiAuth", () => {
     await requireApiAuth(req, res, next);
     expect(next).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it("accepts workspace_id from request body with static token", async () => {
+    const { req, res, next } = createMockReqRes("Bearer test-secret-token");
+    req.body = { workspace_id: "T_BODY" };
+    await requireApiAuth(req, res, next);
+    expect(next).toHaveBeenCalled();
+    expect(req.workspaceId).toBe("T_BODY");
+    expect(req.authMode).toBe("service");
+    expect(res.status).not.toHaveBeenCalled();
+  });
+});
+
+describe("requireServiceAuth", () => {
+  beforeEach(() => {
+    mockConfig.API_AUTH_TOKEN = "test-secret-token";
+    mockConfig.NODE_ENV = "development";
+  });
+
+  it("accepts valid service credentials and stamps service auth mode", async () => {
+    const { req, res, next } = createMockReqRes("Bearer test-secret-token", "T_SERVICE");
+    await requireServiceAuth(req, res, next);
+    expect(next).toHaveBeenCalled();
+    expect(req.workspaceId).toBe("T_SERVICE");
+    expect(req.authMode).toBe("service");
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid service credentials", async () => {
+    const { req, res, next } = createMockReqRes("Bearer wrong-token", "T_SERVICE");
+    await requireServiceAuth(req, res, next);
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(403);
   });
 });

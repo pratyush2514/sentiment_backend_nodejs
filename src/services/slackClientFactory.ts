@@ -62,6 +62,9 @@ function evictStaleEntries(): void {
  * 3. Fallback to global config.SLACK_BOT_TOKEN (dev/single-tenant mode)
  * 4. Throw if no token available
  */
+// Dedup concurrent fetches for the same workspace
+const inFlightRequests = new Map<string, Promise<SlackClient>>();
+
 export async function getSlackClient(workspaceId: string): Promise<SlackClient> {
   // 1. Check cache
   const cached = cache.get(workspaceId);
@@ -69,6 +72,20 @@ export async function getSlackClient(workspaceId: string): Promise<SlackClient> 
     return cached.client;
   }
 
+  // 1.5. Dedup: if another call is already fetching for this workspace, reuse that promise
+  const inflight = inFlightRequests.get(workspaceId);
+  if (inflight) return inflight;
+
+  const fetchPromise = _fetchSlackClient(workspaceId);
+  inFlightRequests.set(workspaceId, fetchPromise);
+  try {
+    return await fetchPromise;
+  } finally {
+    inFlightRequests.delete(workspaceId);
+  }
+}
+
+async function _fetchSlackClient(workspaceId: string): Promise<SlackClient> {
   // 2. Workspace-scoped rotating credentials
   try {
     const credentials = await getUsableBotToken(workspaceId);

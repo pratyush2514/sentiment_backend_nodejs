@@ -19,9 +19,9 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   // Pooled connection for application queries (optional, falls back to DATABASE_URL)
   DATABASE_URL_POOLED: z.string().optional(),
-  DB_POOL_MAX: z.coerce.number().int().positive().default(5),
-  DIRECT_DB_POOL_MAX: z.coerce.number().int().positive().default(1),
-  PGBOSS_MAX_CONNECTIONS: z.coerce.number().int().positive().default(3),
+  DB_POOL_MAX: z.coerce.number().int().positive().default(10),
+  DIRECT_DB_POOL_MAX: z.coerce.number().int().positive().default(2),
+  PGBOSS_MAX_CONNECTIONS: z.coerce.number().int().positive().default(5),
 
   // Supabase client (optional — used for convenience queries)
   SUPABASE_URL: z.string().optional(),
@@ -29,6 +29,7 @@ const envSchema = z.object({
 
   // Server
   PORT: z.coerce.number().int().positive().default(3000),
+  PUBLIC_BASE_URL: z.string().optional().default(""),
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace"])
     .default("info"),
@@ -60,6 +61,8 @@ const envSchema = z.object({
   QUEUE_STALE_CHANNEL_MINUTES: z.coerce.number().int().positive().default(10),
   QUEUE_STALE_ANALYSIS_MINUTES: z.coerce.number().int().positive().default(15),
   QUEUE_STALE_SCAN_LIMIT: z.coerce.number().int().positive().default(50),
+  INTELLIGENCE_RECONCILE_INTERVAL_MS: z.coerce.number().int().positive().default(5 * 60 * 1000),
+  INTELLIGENCE_RECONCILE_SCAN_LIMIT: z.coerce.number().int().positive().default(50),
 
   // LLM Provider — set LLM_PROVIDER and supply the matching API key
   LLM_PROVIDER: z.enum(["openai", "gemini"]).default("openai"),
@@ -121,6 +124,19 @@ const envSchema = z.object({
 
   // Token Encryption (required for multi-tenant workspace token storage)
   ENCRYPTION_KEY: z.string().optional().default(""),
+
+  // Fathom Meeting Integration
+  FATHOM_ENABLED: z.coerce.boolean().default(false),
+  FATHOM_ALLOW_INSECURE_WEBHOOKS: z.coerce.boolean().default(false),
+  FATHOM_WEBHOOK_SECRET: z.string().optional().default(""),
+  FATHOM_DEFAULT_OBLIGATION_SLA_HOURS: z.coerce.number().positive().default(72),
+  FATHOM_MAX_TRANSCRIPT_TOKENS: z.coerce.number().int().positive().default(8000),
+  FATHOM_HISTORICAL_SYNC_STALE_MINUTES: z.coerce.number().int().positive().default(45),
+
+  // Channel Classification
+  LLM_INFRA_BUDGET_USD: z.coerce.number().positive().default(5.0),
+  CLASSIFICATION_RERUN_DAYS: z.coerce.number().int().positive().default(7),
+  CLASSIFICATION_LLM_ENABLED: z.coerce.boolean().default(true),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -166,6 +182,29 @@ if (parsed.data.NODE_ENV === "production") {
   if (parsed.data.CORS_ORIGIN === "*") {
     console.error("CORS_ORIGIN cannot be '*' in production");
     process.exit(1);
+  }
+
+  if (parsed.data.FATHOM_ENABLED) {
+    if (!parsed.data.PUBLIC_BASE_URL) {
+      console.error("PUBLIC_BASE_URL is required when FATHOM_ENABLED=true in production");
+      process.exit(1);
+    }
+    if (!parsed.data.ENCRYPTION_KEY || parsed.data.ENCRYPTION_KEY.length !== 64) {
+      console.error(
+        "ENCRYPTION_KEY must be a 64-character hex string when FATHOM_ENABLED=true in production.\n" +
+        "Generate one with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
+      );
+      process.exit(1);
+    }
+    if (parsed.data.FATHOM_ALLOW_INSECURE_WEBHOOKS) {
+      console.error("FATHOM_ALLOW_INSECURE_WEBHOOKS cannot be enabled in production");
+      process.exit(1);
+    }
+    if (!parsed.data.FATHOM_WEBHOOK_SECRET) {
+      console.warn(
+        "WARNING: FATHOM_WEBHOOK_SECRET not set — webhooks will be rejected in production",
+      );
+    }
   }
 }
 

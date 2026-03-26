@@ -4,6 +4,11 @@ import { logger } from "../utils/logger.js";
 import { persistCanonicalChannelState } from "./canonicalChannelState.js";
 import { createEmbeddingProvider } from "./embeddingProvider.js";
 import { eventBus } from "./eventBus.js";
+import {
+  insertContextDocumentWithArtifact,
+  recordIntelligenceDegradation,
+  recordSummaryArtifact,
+} from "./intelligenceTruth.js";
 import { backfillSummarize, estimateTokens } from "./summarizer.js";
 
 const log = logger.child({ service: "backfillSummary" });
@@ -18,8 +23,12 @@ export interface MaterializeBackfillSummaryInput {
 export interface MaterializeBackfillSummaryResult {
   summary: string;
   keyDecisions: string[];
+  summaryFacts: import("../types/database.js").SummaryFact[];
   messageCount: number;
   summaryType: "llm" | "no_recent_messages";
+  summaryArtifactId: string;
+  completenessStatus: "complete" | "partial" | "stale" | "no_recent_messages";
+  degradedReasons: string[];
 }
 
 export async function materializeBackfillSummary({
@@ -41,6 +50,36 @@ export async function materializeBackfillSummary({
 
     if (recentMessages.length === 0) {
       const summary = `No recent conversation in the last ${windowDays} day${windowDays === 1 ? "" : "s"}.`;
+      const artifact = await recordSummaryArtifact({
+        workspaceId,
+        channelId,
+        kind: "backfill_rollup",
+        generationMode: "fallback",
+        completenessStatus: "no_recent_messages",
+        content: summary,
+        keyDecisions: [],
+        summaryFacts: [],
+        coverageStartTs: null,
+        coverageEndTs: null,
+        candidateMessageCount: 0,
+        includedMessageCount: 0,
+        updateChannelTruth: true,
+      });
+
+      await insertContextDocumentWithArtifact({
+        workspaceId,
+        channelId,
+        docType: "backfill_rollup",
+        content: summary,
+        tokenCount: estimateTokens(summary),
+        embedding: null,
+        sourceTsStart: null,
+        sourceTsEnd: null,
+        sourceThreadTs: null,
+        messageCount: 0,
+        summaryArtifactId: artifact.summaryArtifactId,
+      });
+
       await db.upsertChannelState(workspaceId, channelId, {
         running_summary: summary,
         key_decisions_json: [],
@@ -62,8 +101,12 @@ export async function materializeBackfillSummary({
       return {
         summary,
         keyDecisions: [],
+        summaryFacts: [],
         messageCount: 0,
         summaryType: "no_recent_messages",
+        summaryArtifactId: artifact.summaryArtifactId,
+        completenessStatus: "no_recent_messages",
+        degradedReasons: [],
       };
     }
 
@@ -84,10 +127,57 @@ export async function materializeBackfillSummary({
       embedding = embResult.embedding;
     } catch (err) {
       log.warn({ err, channelId }, "Embedding failed for backfill summary");
+      await recordIntelligenceDegradation({
+        workspaceId,
+        channelId,
+        scope: "summary",
+        eventType: "embedding_failed",
+        severity: "medium",
+        details: {
+          summaryKind: "backfill_rollup",
+        },
+      });
     }
   }
 
-  await db.insertContextDocument({
+  const degradedReasons = [
+    ...result.degradedReasons,
+  ] as Array<import("./intelligenceTruth.js").IntelligenceDegradationEventType>;
+  if (embedding === null) {
+    degradedReasons.push("embedding_failed");
+  }
+
+  for (const reason of degradedReasons) {
+    await recordIntelligenceDegradation({
+      workspaceId,
+      channelId,
+      scope: "summary",
+      eventType: reason,
+      severity: reason === "budget_truncated" ? "high" : "medium",
+      details: {
+        summaryKind: "backfill_rollup",
+      },
+    });
+  }
+
+  const artifact = await recordSummaryArtifact({
+    workspaceId,
+    channelId,
+    kind: "backfill_rollup",
+    generationMode: "llm",
+    completenessStatus: result.partial ? "partial" : "complete",
+    content: result.summary,
+    keyDecisions: result.keyDecisions,
+    summaryFacts: result.summaryFacts,
+    coverageStartTs: result.sourceTsStart,
+    coverageEndTs: result.sourceTsEnd,
+    candidateMessageCount: result.messageCount,
+    includedMessageCount: result.messageCount,
+    degradedReasons,
+    updateChannelTruth: true,
+  });
+
+  await insertContextDocumentWithArtifact({
     workspaceId,
     channelId,
     docType: "backfill_rollup",
@@ -98,6 +188,7 @@ export async function materializeBackfillSummary({
     sourceTsEnd: result.sourceTsEnd,
     sourceThreadTs: null,
     messageCount: result.messageCount,
+    summaryArtifactId: artifact.summaryArtifactId,
   });
 
   await db.upsertChannelState(workspaceId, channelId, {
@@ -121,7 +212,11 @@ export async function materializeBackfillSummary({
   return {
     summary: result.summary,
     keyDecisions: result.keyDecisions,
+    summaryFacts: result.summaryFacts,
     messageCount: result.messageCount,
     summaryType: "llm",
+    summaryArtifactId: artifact.summaryArtifactId,
+    completenessStatus: result.partial ? "partial" : "complete",
+    degradedReasons,
   };
 }

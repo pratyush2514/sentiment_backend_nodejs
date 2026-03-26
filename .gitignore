@@ -11,3 +11,4 @@ coverage/
 *.tgz
 .claude/**
 /.claude-*/
+api.txt

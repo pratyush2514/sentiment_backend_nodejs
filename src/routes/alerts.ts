@@ -3,11 +3,15 @@ import { z } from "zod/v4";
 import { DEFAULT_WORKSPACE } from "../constants.js";
 import * as db from "../db/queries.js";
 import { resolveSurfaceAnalysis } from "../services/analysisSurface.js";
+import { persistCanonicalChannelState } from "../services/canonicalChannelState.js";
 import { resolveConversationImportance } from "../services/conversationImportance.js";
 import { emitFollowUpAlert } from "../services/followUpEvents.js";
 import { clearFollowUpReminderDms } from "../services/followUpReminderDms.js";
 import { isManagerRelevantThreadInsight } from "../services/threadInsightPolicy.js";
+import { logger } from "../utils/logger.js";
 import type { EnrichedMessageWithAnalyticsRow } from "../types/database.js";
+
+const log = logger.child({ route: "alerts" });
 
 export const alertsRouter = Router();
 
@@ -618,6 +622,16 @@ alertsRouter.post("/follow-ups/:itemId/action", async (req, res) => {
           : "This follow-up was reopened and is awaiting a fresh reply.",
     });
   }
+
+  // Reactive health refresh: recompute channel state from fresh DB counts
+  // so the dashboard immediately reflects the follow-up change.
+  // Fire-and-forget — don't block the response on this.
+  persistCanonicalChannelState(workspaceId, item.channel_id).catch((err) => {
+    log.debug(
+      { err: err instanceof Error ? err.message : "unknown", channelId: item.channel_id },
+      "Reactive health refresh after follow-up action failed (non-fatal)",
+    );
+  });
 
   res.status(200).json({
     itemId: item.id,

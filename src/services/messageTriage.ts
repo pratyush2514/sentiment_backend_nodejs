@@ -47,7 +47,11 @@ const EXPLICIT_BLOCKER_RE =
 const QUESTION_RE =
   /\?|\b(can someone|could someone|who can|what account|where is|how do|what's|whats|why is|when will)\b/i;
 const REQUEST_RE =
-  /\b(please|can you|could you|need you to|take a look|review this|check this|help with|look into)\b/i;
+  /\b(please|can you|could you|need you to|take a look|review this|check this|help with|look into|lmk\b|let me know|please review|please check|please send|please merge|please fill|please share|can i merge)\b/i;
+const FRUSTRATION_RE =
+  /\b(pointless|how come.{0,20}(long|still)|not how|didnt get|didn'?t get|everything is broke|still broken|still stuck|keeps breaking|keeps failing|so slow|waste of time|makes no sense)\b/i;
+const BREAKAGE_REPORT_RE =
+  /\b(broke\b|broken\b|everything.{0,10}broke|not working|getting error|having issue|having issues|messed up|it crashed|keeps crashing)\b/i;
 const ACTION_REQUIRED_RE =
   /\b(we need to fix|need to fix|needs fixing|need fixing|needs a fix|requires a fix|have to fix|has to be fixed|must fix|should fix|needs attention)\b/i;
 const OWNER_RE =
@@ -105,6 +109,8 @@ function detectSignals(text: string) {
     hasTechnicalLogContext: LOG_CONTEXT_RE.test(text),
     hasProblemWords: PROBLEM_WORD_RE.test(text) || hasBreakageSignal,
     hasBreakageSignal,
+    hasFrustrationSignal: FRUSTRATION_RE.test(text),
+    hasBreakageReport: BREAKAGE_REPORT_RE.test(text),
   };
 }
 
@@ -245,6 +251,10 @@ export function classifyMessageTriage(input: {
     primarySignals.hasProblemWords || focusedSignals.hasProblemWords;
   const hasBreakageSignal =
     primarySignals.hasBreakageSignal || focusedSignals.hasBreakageSignal;
+  const hasFrustrationSignal =
+    primarySignals.hasFrustrationSignal || focusedSignals.hasFrustrationSignal;
+  const hasBreakageReport =
+    primarySignals.hasBreakageReport || focusedSignals.hasBreakageReport;
   const contrastFocusedRisk =
     hasContrast &&
     (focusedSignals.explicitBlocker ||
@@ -303,6 +313,8 @@ export function classifyMessageTriage(input: {
   pushReason(reasonCodes, "technical_log_context", hasTechnicalLogContext);
   pushReason(reasonCodes, "problem_signal", hasProblemWords);
   pushReason(reasonCodes, "breakage_signal", hasBreakageSignal);
+  pushReason(reasonCodes, "frustration_signal", hasFrustrationSignal);
+  pushReason(reasonCodes, "breakage_report", hasBreakageReport);
   pushReason(reasonCodes, "risk_score_high", riskScore >= 0.6);
   pushReason(reasonCodes, "related_external_incident", relatedIncident !== null);
 
@@ -320,6 +332,8 @@ export function classifyMessageTriage(input: {
     hasTechnicalLogContext,
     hasProblemWords,
     hasBreakageSignal,
+    hasFrustrationSignal,
+    hasBreakageReport,
     contrastFocusedRisk,
     riskScore,
     channelMode,
@@ -358,6 +372,8 @@ export function classifyMessageTriage(input: {
         hasDecisionSignal: false,
         hasEscalationSignal: false,
         hasBreakageSignal: false,
+        hasFrustrationSignal: false,
+        hasBreakageReport: false,
         contrastFocusedRisk: false,
         riskScore,
       },
@@ -590,6 +606,67 @@ export function classifyMessageTriage(input: {
       confidence: clampScore(
         0.64 + (hasDecisionSignal ? 0.08 : 0) + (hasOwnerSignal ? 0.05 : 0),
       ),
+      incidentFamily: "none",
+      reasonCodes,
+      signals: baseSignals,
+    };
+  }
+
+  // Plain request detection: "please review", "can you check", "lmk" etc.
+  // These don't have escalation/blocker signals but ARE actionable requests.
+  if (hasRequest && !resolutionSignal) {
+    return {
+      candidateKind: "message_candidate",
+      surfacePriority: "low",
+      candidateScore: clampScore(0.45 + (hasQuestion ? 0.08 : 0)),
+      stateTransition: null,
+      signalType: "request",
+      severity: "low",
+      stateImpact: "none",
+      evidenceType: "heuristic",
+      channelMode,
+      originType,
+      confidence: clampScore(0.62 + (hasQuestion ? 0.05 : 0)),
+      incidentFamily: "none",
+      reasonCodes,
+      signals: baseSignals,
+    };
+  }
+
+  // Frustration/complaint detection without explicit escalation
+  if (hasFrustrationSignal) {
+    return {
+      candidateKind: "message_candidate",
+      surfacePriority: "medium",
+      candidateScore: clampScore(0.55),
+      stateTransition: null,
+      signalType: "human_risk",
+      severity: "medium",
+      stateImpact: "investigating",
+      evidenceType: "heuristic",
+      channelMode,
+      originType,
+      confidence: clampScore(0.64),
+      incidentFamily: "none",
+      reasonCodes,
+      signals: baseSignals,
+    };
+  }
+
+  // Breakage/error report without explicit blocker signal
+  if (hasBreakageReport) {
+    return {
+      candidateKind: "message_candidate",
+      surfacePriority: "low",
+      candidateScore: clampScore(0.48),
+      stateTransition: input.threadTs ? "investigating" : null,
+      signalType: "context",
+      severity: "low",
+      stateImpact: input.threadTs ? "investigating" : "none",
+      evidenceType: "heuristic",
+      channelMode,
+      originType,
+      confidence: clampScore(0.60),
       incidentFamily: "none",
       reasonCodes,
       signals: baseSignals,

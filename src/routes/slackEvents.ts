@@ -7,6 +7,7 @@ import {
 } from "../middleware/slackSignature.js";
 import {
   enqueueBackfill,
+  enqueueBackfillTier1,
   enqueueLLMAnalyze,
   enqueueMessageIngest,
 } from "../queue/boss.js";
@@ -20,6 +21,10 @@ import {
   getSlackClient,
   invalidateWorkspaceCache,
 } from "../services/slackClientFactory.js";
+import {
+  extractSlackMessageText,
+  mapSlackFiles,
+} from "../services/slackMessageContent.js";
 import {
   buildFileContext,
   buildLinkContext,
@@ -225,7 +230,7 @@ slackEventsRouter.post(
               newStatus: "pending",
             },
           );
-          await enqueueBackfill(
+          await enqueueBackfillTier1(
             workspaceId,
             event.channel,
             "member_joined_channel",
@@ -350,26 +355,20 @@ slackEventsRouter.post(
           // Extract file metadata if present
           const msgEvent =
             event as import("../types/slack.js").SlackMessageEvent;
-          const files = msgEvent.files?.map((f) => ({
-            name: f.name,
-            title: f.title,
-            mimetype: f.mimetype,
-            filetype: f.filetype,
-            size: f.size,
-            permalink: f.permalink,
-          }));
+          const files = mapSlackFiles(msgEvent.files);
+          const extractedText = extractSlackMessageText(msgEvent);
 
           await enqueueMessageIngest({
             workspaceId,
             channelId: messageChannelId,
             ts: messageTs,
             userId: event.user,
-            text: event.text ?? "",
+            text: extractedText,
             threadTs: event.thread_ts ?? null,
             eventId: callbackPayload.event_id ?? messageTs,
             ...(event.subtype ? { subtype: event.subtype } : {}),
             ...(messageBotId ? { botId: messageBotId } : {}),
-            files: files && files.length > 0 ? files : undefined,
+            files: files ?? undefined,
           });
 
           log.info(
@@ -395,23 +394,16 @@ slackEventsRouter.post(
             return;
           }
 
-          const files =
-            event.message.files?.map((f) => ({
-              name: f.name,
-              title: f.title,
-              mimetype: f.mimetype,
-              filetype: f.filetype,
-              size: f.size,
-              permalink: f.permalink,
-            })) ?? null;
-          const extractedLinks = extractLinks(event.message.text ?? "");
+          const files = mapSlackFiles(event.message.files);
+          const extractedText = extractSlackMessageText(event.message);
+          const extractedLinks = extractLinks(extractedText);
           const updatedMessage =
             (await db.replaceMessageContent({
               workspaceId,
               channelId: event.channel,
               ts: event.message.ts,
               userId: event.message.user,
-              text: event.message.text ?? "",
+              text: extractedText,
               threadTs: event.message.thread_ts ?? null,
               subtype: event.message.subtype ?? null,
               botId: event.message.bot_id ?? null,
@@ -423,7 +415,7 @@ slackEventsRouter.post(
               event.channel,
               event.message.ts,
               event.message.user,
-              event.message.text ?? "",
+              extractedText,
               "realtime",
               event.message.thread_ts ?? null,
               event.message.subtype ?? null,
@@ -433,7 +425,7 @@ slackEventsRouter.post(
             ));
 
           const normalizedText = (
-            normalizeText(event.message.text ?? "") +
+            normalizeText(extractedText) +
             buildFileContext(files) +
             buildLinkContext(extractedLinks.length > 0 ? extractedLinks : null)
           ).trim();
@@ -457,7 +449,7 @@ slackEventsRouter.post(
               threadTs: updatedMessage.thread_ts,
               userId: event.message.user,
               text: normalizedText,
-              rawText: event.message.text ?? "",
+              rawText: extractedText,
             });
             await enqueueLLMAnalyze({
               workspaceId,

@@ -10,6 +10,14 @@ import { analyzeMessage } from "../../services/emotionAnalyzer.js";
 import { eventBus } from "../../services/eventBus.js";
 import { computeContextSLA, resolveOwnershipLanes } from "../../services/followUpMonitor.js";
 import { clearFollowUpReminderDms } from "../../services/followUpReminderDms.js";
+import {
+  recordIntelligenceDegradation,
+  recordMessageTruthCompleted,
+  recordMessageTruthFailed,
+  recordMessageTruthProcessing,
+  recordMessageTruthRecovery,
+  recordMessageTruthSuppressed,
+} from "../../services/intelligenceTruth.js";
 import { isDeepAnalysisCandidate } from "../../services/messageTriage.js";
 import { sanitizeForExternalUse } from "../../services/privacyFilter.js";
 import { computeRiskScore } from "../../services/riskHeuristic.js";
@@ -83,15 +91,7 @@ export async function handleLLMAnalyze(
       "Starting LLM analysis",
     );
 
-    // 1. Budget check
-    const dailyCost = await db.getDailyLLMCost(workspaceId);
-    if (dailyCost >= config.LLM_DAILY_BUDGET_USD) {
-      alertBudgetExceeded(workspaceId, dailyCost, config.LLM_DAILY_BUDGET_USD);
-      log.warn({ dailyCost, budget: config.LLM_DAILY_BUDGET_USD }, "Budget exceeded, skipping");
-      continue;
-    }
-
-    // 2. Fetch messages
+    // 1. Fetch messages
     const rule = await db.getFollowUpRule(workspaceId, channelId);
     const analysisWindowDays = resolveAnalysisWindowDays(rule);
     const isThread = !!threadTs;
@@ -182,16 +182,59 @@ export async function handleLLMAnalyze(
         (!hasPersistedAnalysis(message) || message.analysis_status !== "completed"),
     );
 
-    for (const target of normalizedTargetRows) {
-      if (hasPersistedAnalysis(target) && target.analysis_status !== "completed") {
-        await db.updateMessageAnalysisStatus(workspaceId, channelId, target.ts, "completed");
-      }
-    }
-
     if (targetsToAnalyze.length === 0) {
       log.info({ channelId, threadTs, mode }, "Requested messages already analyzed");
       continue;
     }
+
+    // 2. Budget check after target resolution so we can stamp a terminal truth state
+    // instead of leaving messages stuck in pending/processing recovery loops.
+    const dailyCost = await db.getDailyLLMCost(workspaceId);
+    if (dailyCost >= config.LLM_DAILY_BUDGET_USD) {
+      alertBudgetExceeded(workspaceId, dailyCost, config.LLM_DAILY_BUDGET_USD);
+      await recordIntelligenceDegradation({
+        workspaceId,
+        channelId,
+        scope: "channel",
+        eventType: "budget_exceeded",
+        severity: "high",
+        details: {
+          jobType: "llm.analyze",
+          dailyCost,
+          budget: config.LLM_DAILY_BUDGET_USD,
+          suppressedTargets: targetsToAnalyze.length,
+          mode,
+          triggerType,
+        },
+      });
+      for (const target of targetsToAnalyze) {
+        const skippedStatus = await recordMessageTruthSuppressed({
+          workspaceId,
+          channelId,
+          messageTs: target.ts,
+          eligibilityStatus: "policy_suppressed",
+          suppressionReason: "budget_exceeded",
+        });
+        await db.updateMessageAnalysisStatus(workspaceId, channelId, target.ts, skippedStatus);
+      }
+      log.warn(
+        {
+          channelId,
+          threadTs,
+          mode,
+          triggerType,
+          dailyCost,
+          budget: config.LLM_DAILY_BUDGET_USD,
+          suppressedTargets: targetsToAnalyze.length,
+        },
+        "Budget exceeded, suppressing analysis targets for this run",
+      );
+      continue;
+    }
+
+    // 3. Fetch classification for alert thresholds
+    const classification = await db.getChannelClassification(workspaceId, channelId);
+    const channelType = classification?.channel_type ?? null;
 
     const channelState = await db.getChannelState(workspaceId, channelId);
     let snapshotState = buildSnapshotState(channelState);
@@ -225,11 +268,38 @@ export async function handleLLMAnalyze(
         };
 
         if (sanitizedTarget.privacySkipped) {
-          await db.updateMessageAnalysisStatus(workspaceId, channelId, target.ts, "skipped");
+          const skippedStatus = await recordMessageTruthSuppressed({
+            workspaceId,
+            channelId,
+            messageTs: target.ts,
+            eligibilityStatus: "privacy_suppressed",
+            suppressionReason: "privacy_skip",
+          });
+          await db.updateMessageAnalysisStatus(workspaceId, channelId, target.ts, skippedStatus);
           continue;
         }
 
         processingTargets.add(target.ts);
+        if (hasPersistedAnalysis(target) && target.analysis_status !== "completed") {
+          await recordMessageTruthRecovery({
+            workspaceId,
+            channelId,
+            messageTs: target.ts,
+            eligibilityStatus: "eligible",
+            degradationEventType: "incomplete_persisted_analysis_recovered",
+            degradationDetails: {
+              triggerType,
+              mode,
+            },
+          });
+        } else {
+          await recordMessageTruthProcessing({
+            workspaceId,
+            channelId,
+            messageTs: target.ts,
+            eligibilityStatus: "eligible",
+          });
+        }
         await db.updateMessageAnalysisStatus(workspaceId, channelId, target.ts, "processing");
 
         const contextMsgs = sanitizedMessages.map(({ userId, text, ts }) => ({ userId, text, ts }));
@@ -252,7 +322,19 @@ export async function handleLLMAnalyze(
 
         if (result.status === "failed") {
           log.warn({ channelId, messageTs: target.ts, error: result.error }, "Message analysis failed");
-          await db.updateMessageAnalysisStatus(workspaceId, channelId, target.ts, "failed");
+          const failedStatus = await recordMessageTruthFailed({
+            workspaceId,
+            channelId,
+            messageTs: target.ts,
+            eligibilityStatus: "eligible",
+            degradationEventType: "analysis_failed",
+            degradationDetails: {
+              triggerType,
+              mode,
+              error: result.error ?? null,
+            },
+          });
+          await db.updateMessageAnalysisStatus(workspaceId, channelId, target.ts, failedStatus);
           processingTargets.delete(target.ts);
           await recordCost(workspaceId, channelId, result.raw.model, result.raw.promptTokens, result.raw.completionTokens);
           continue;
@@ -295,7 +377,13 @@ export async function handleLLMAnalyze(
         });
 
         await recordCost(workspaceId, channelId, result.raw.model, result.raw.promptTokens, result.raw.completionTokens);
-        await db.updateMessageAnalysisStatus(workspaceId, channelId, target.ts, "completed");
+        const completedStatus = await recordMessageTruthCompleted({
+          workspaceId,
+          channelId,
+          messageTs: target.ts,
+          eligibilityStatus: "eligible",
+        });
+        await db.updateMessageAnalysisStatus(workspaceId, channelId, target.ts, completedStatus);
         processingTargets.delete(target.ts);
 
         snapshotState = {
@@ -320,6 +408,7 @@ export async function handleLLMAnalyze(
           channelId,
           messageTs: target.ts,
           threadTs: threadTs ?? target.thread_ts ?? undefined,
+          channelType,
         };
         checkAndAlert(result.data, alertContext);
 
@@ -518,7 +607,18 @@ export async function handleLLMAnalyze(
     } catch (err) {
       log.error({ err, channelId, triggerType, mode }, "LLM analysis threw unexpected error");
       for (const targetTs of processingTargets) {
-        await db.updateMessageAnalysisStatus(workspaceId, channelId, targetTs, "failed");
+        const failedStatus = await recordMessageTruthFailed({
+          workspaceId,
+          channelId,
+          messageTs: targetTs,
+          eligibilityStatus: "eligible",
+          degradationEventType: "analysis_threw_unexpected_error",
+          degradationDetails: {
+            triggerType,
+            mode,
+          },
+        });
+        await db.updateMessageAnalysisStatus(workspaceId, channelId, targetTs, failedStatus);
       }
       await persistCanonicalChannelState(workspaceId, channelId, {
         rule,

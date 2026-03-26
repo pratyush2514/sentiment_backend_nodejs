@@ -1,8 +1,18 @@
 import { EventEmitter } from "node:events";
 import type { DashboardEvent, DashboardEventType } from "../types/database.js";
 
+type DashboardEventDispatcher = (event: DashboardEvent) => Promise<void>;
+
+let dispatchDashboardEvent: DashboardEventDispatcher | null = null;
+
+export function registerDashboardEventDispatcher(
+  dispatcher: DashboardEventDispatcher | null,
+): void {
+  dispatchDashboardEvent = dispatcher;
+}
+
 class DashboardEventBus extends EventEmitter {
-  publish(event: DashboardEvent): void {
+  publishLocal(event: DashboardEvent): void {
     this.emit("dashboard_event", event);
   }
 
@@ -12,13 +22,20 @@ class DashboardEventBus extends EventEmitter {
     channelId: string,
     data: Record<string, unknown>,
   ): void {
-    this.publish({
+    const event: DashboardEvent = {
       type,
       workspaceId,
       channelId,
       data,
       timestamp: new Date().toISOString(),
-    });
+    };
+
+    if (dispatchDashboardEvent) {
+      void dispatchDashboardEvent(event);
+      return;
+    }
+
+    this.publishLocal(event);
   }
 }
 

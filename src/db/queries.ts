@@ -1,7 +1,19 @@
+import crypto from "node:crypto";
 import { config } from "../config.js";
+import { PRODUCT_WINDOW_POLICY } from "../services/windowPolicy.js";
+import {
+  deriveIngestReadinessFromBackfillRun,
+  deriveIntelligenceReadinessFromArtifact,
+  deriveLegacyAnalysisStatus,
+  normalizeDegradedReasons,
+} from "./intelligenceTruth.js";
 import { pool } from "./pool.js";
 import type {
   AnalysisStatus,
+  BackfillMemberSyncResult,
+  BackfillRunPhase,
+  BackfillRunRow,
+  BackfillRunStatus,
   ChannelMemberRow,
   ChannelOverviewRow,
   ChannelRow,
@@ -21,11 +33,22 @@ import type {
   FollowUpRuleRow,
   FollowUpSeriousness,
   FollowUpWorkflowState,
+  IngestReadiness,
   ImportanceTierOverride,
   ChannelModeOverride,
   ChannelMode,
   InteractionTone,
+  IntelligenceDegradationEventRow,
+  IntelligenceDegradationScopeType,
+  IntelligenceDegradationSeverity,
+  IntelligenceDegradationType,
+  IntelligenceReadiness,
   MessageCandidateKind,
+  MessageIntelligenceEligibilityStatus,
+  MessageIntelligenceExecutionStatus,
+  MessageIntelligenceQualityStatus,
+  MessageIntelligenceStateRow,
+  MessageIntelligenceSuppressionReason,
   CanonicalSignalSeverity,
   CanonicalSignalType,
   EvidenceType,
@@ -47,6 +70,30 @@ import type {
   UserProfileRow,
   WorkspaceRow,
   ChannelHealthCountsRow,
+  SummaryArtifactCompletenessStatus,
+  SummaryFact,
+  SummaryArtifactGenerationMode,
+  SummaryArtifactKind,
+  SummaryArtifactRow,
+  FathomConnectionRow,
+  FathomConnectionStatus,
+  MeetingRow,
+  MeetingImportMode,
+  MeetingSource,
+  MeetingProcessingStatus,
+  MeetingExtractionStatus,
+  MeetingObligationRow,
+  MeetingObligationType,
+  MeetingObligationStatus,
+  MeetingObligationPriority,
+  MeetingObligationDueDateSource,
+  MeetingChannelLinkRow,
+  MeetingChannelLinkType,
+  FathomParticipant,
+  FathomActionItem,
+  ChannelClassificationRow,
+  ChannelClassificationType,
+  ClassificationSource,
 } from "../types/database.js";
 
 function toIsoTimestamp(value: string | Date | null | undefined): string {
@@ -54,7 +101,25 @@ function toIsoTimestamp(value: string | Date | null | undefined): string {
   if (value instanceof Date) return value.toISOString();
 
   const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? new Date(0).toISOString() : parsed.toISOString();
+  return Number.isNaN(parsed.getTime())
+    ? new Date(0).toISOString()
+    : parsed.toISOString();
+}
+
+function buildMeetingObligationDedupeKey(input: {
+  obligationType: string;
+  title: string;
+  ownerName?: string | null;
+  dueDate?: string | null;
+}): string {
+  const normalized = [
+    input.obligationType.trim().toLowerCase(),
+    input.title.trim().toLowerCase(),
+    (input.ownerName ?? "").trim().toLowerCase(),
+    input.dueDate ?? "",
+  ].join("|");
+
+  return crypto.createHash("sha256").update(normalized).digest("hex");
 }
 
 // ─── Event deduplication ────────────────────────────────────────────────────
@@ -229,6 +294,53 @@ export async function updateChannelStatus(
   );
 }
 
+/**
+ * Update the backfill tier and optionally the tier2 coverage boundary in channel_state.
+ */
+export async function updateBackfillTier(
+  workspaceId: string,
+  channelId: string,
+  tier: number | null,
+  tier2CoverageOldestTs?: string | null,
+): Promise<void> {
+  await pool.query(
+    `UPDATE channel_state
+     SET backfill_tier = $3,
+         tier2_coverage_oldest_ts = COALESCE($4, tier2_coverage_oldest_ts),
+         updated_at = NOW()
+     WHERE workspace_id = $1 AND channel_id = $2`,
+    [workspaceId, channelId, tier, tier2CoverageOldestTs ?? null],
+  );
+}
+
+/**
+ * Find channels stuck in Tier 1 or Tier 2 (not yet fully initialized).
+ * Excludes channels with an active backfill run.
+ */
+export async function getRecoverableTieredChannels(
+  staleMinutes: number,
+  limit = 10,
+): Promise<Array<{ workspace_id: string; channel_id: string; backfill_tier: number; intelligence_readiness: string }>> {
+  const result = await pool.query<{
+    workspace_id: string;
+    channel_id: string;
+    backfill_tier: number;
+    intelligence_readiness: string;
+  }>(
+    `SELECT c.workspace_id, c.channel_id, cs.backfill_tier, cs.intelligence_readiness
+     FROM channels c
+     JOIN channel_state cs ON cs.workspace_id = c.workspace_id AND cs.channel_id = c.channel_id
+     WHERE cs.backfill_tier IS NOT NULL
+       AND cs.backfill_tier IN (1, 2)
+       AND c.updated_at < NOW() - MAKE_INTERVAL(mins => $1)
+       AND cs.active_backfill_run_id IS NULL
+     ORDER BY cs.backfill_tier ASC, c.updated_at ASC
+     LIMIT $2`,
+    [staleMinutes, limit],
+  );
+  return result.rows;
+}
+
 export async function getChannel(
   workspaceId: string,
   channelId: string,
@@ -263,11 +375,16 @@ export async function getRecoverableChannels(
   limit = 25,
 ): Promise<ChannelRow[]> {
   const result = await pool.query<ChannelRow>(
-    `SELECT *
-     FROM channels
-     WHERE status IN ('pending', 'initializing', 'failed')
-       AND updated_at < NOW() - MAKE_INTERVAL(mins => $1)
-     ORDER BY updated_at ASC
+    `SELECT c.*
+     FROM channels c
+     LEFT JOIN channel_state cs
+       ON cs.workspace_id = c.workspace_id
+      AND cs.channel_id = c.channel_id
+     WHERE c.status IN ('pending', 'initializing', 'failed')
+       AND c.updated_at < NOW() - MAKE_INTERVAL(mins => $1)
+       -- Don't re-enqueue if there's already an active backfill running
+       AND (cs.active_backfill_run_id IS NULL)
+     ORDER BY c.updated_at ASC
      LIMIT $2`,
     [staleMinutes, limit],
   );
@@ -276,23 +393,50 @@ export async function getRecoverableChannels(
 
 export async function getAllChannelsWithState(
   workspaceId: string,
+  options: {
+    activeWindowDays?: number;
+  } = {},
 ): Promise<ChannelOverviewRow[]> {
+  const activeWindowDays = Math.max(
+    1,
+    Math.min(
+      PRODUCT_WINDOW_POLICY.archiveWindowDays,
+      Math.trunc(
+        options.activeWindowDays ?? PRODUCT_WINDOW_POLICY.activeWindowDays,
+      ),
+    ),
+  );
   const result = await pool.query<ChannelOverviewRow>(
     `SELECT c.channel_id, c.name, c.conversation_type, c.status, c.initialized_at,
             c.last_event_at, c.updated_at,
             cs.running_summary, cs.sentiment_snapshot_json,
+            cs.ingest_readiness, cs.intelligence_readiness,
+            cs.current_summary_artifact_id, cs.active_backfill_run_id,
+            COALESCE(cs.active_degradation_count, 0) AS active_degradation_count,
+            sa.completeness_status AS latest_summary_completeness,
+            COALESCE(cs.active_degradation_count, 0) > 0 AS has_active_degradations,
             cs.signal, cs.health, cs.signal_confidence,
             cs.risk_drivers_json, cs.attention_summary_json,
             cs.message_disposition_counts_json, cs.effective_channel_mode,
             (SELECT COUNT(*) FROM messages m
              WHERE m.workspace_id = c.workspace_id
-               AND m.channel_id = c.channel_id) AS message_count
+               AND m.channel_id = c.channel_id) AS message_count,
+            (SELECT COUNT(*) FROM messages m
+             WHERE m.workspace_id = c.workspace_id
+               AND m.channel_id = c.channel_id
+               AND TO_TIMESTAMP(m.ts::double precision) >= NOW() - MAKE_INTERVAL(days => $2::int)
+            ) AS active_message_count,
+            (SELECT COUNT(*) FROM messages m
+             WHERE m.workspace_id = c.workspace_id
+               AND m.channel_id = c.channel_id) AS total_imported_message_count
      FROM channels c
      LEFT JOIN channel_state cs
        ON cs.workspace_id = c.workspace_id AND cs.channel_id = c.channel_id
+     LEFT JOIN summary_artifacts sa
+       ON sa.id = cs.current_summary_artifact_id
      WHERE c.workspace_id = $1
      ORDER BY c.last_event_at DESC NULLS LAST`,
-    [workspaceId],
+    [workspaceId, activeWindowDays],
   );
   return result.rows;
 }
@@ -305,6 +449,26 @@ export async function deleteChannelCascade(
 
   try {
     await client.query("BEGIN");
+    await client.query(
+      `DELETE FROM intelligence_degradation_events
+       WHERE workspace_id = $1 AND channel_id = $2`,
+      [workspaceId, channelId],
+    );
+    await client.query(
+      `DELETE FROM message_intelligence_state
+       WHERE workspace_id = $1 AND channel_id = $2`,
+      [workspaceId, channelId],
+    );
+    await client.query(
+      `DELETE FROM summary_artifacts
+       WHERE workspace_id = $1 AND channel_id = $2`,
+      [workspaceId, channelId],
+    );
+    await client.query(
+      `DELETE FROM backfill_runs
+       WHERE workspace_id = $1 AND channel_id = $2`,
+      [workspaceId, channelId],
+    );
     await client.query(
       `DELETE FROM follow_up_items
        WHERE workspace_id = $1 AND channel_id = $2`,
@@ -363,24 +527,78 @@ export async function deleteChannelCascade(
  * Delete ALL data for a workspace — channels, messages, analytics, roles,
  * follow-ups, costs, and the workspace record itself. Used by "Disconnect Workspace".
  */
-export async function deleteWorkspaceCascade(workspaceId: string): Promise<void> {
+export async function deleteWorkspaceCascade(
+  workspaceId: string,
+): Promise<void> {
   const client = await pool.connect();
 
   try {
     await client.query("BEGIN");
     // Child tables first (FK order)
-    await client.query(`DELETE FROM follow_up_items   WHERE workspace_id = $1`, [workspaceId]);
-    await client.query(`DELETE FROM follow_up_rules   WHERE workspace_id = $1`, [workspaceId]);
-    await client.query(`DELETE FROM message_analytics  WHERE workspace_id = $1`, [workspaceId]);
-    await client.query(`DELETE FROM context_documents  WHERE workspace_id = $1`, [workspaceId]);
-    await client.query(`DELETE FROM llm_costs          WHERE workspace_id = $1`, [workspaceId]);
-    await client.query(`DELETE FROM thread_edges       WHERE workspace_id = $1`, [workspaceId]);
-    await client.query(`DELETE FROM messages           WHERE workspace_id = $1`, [workspaceId]);
-    await client.query(`DELETE FROM channel_state      WHERE workspace_id = $1`, [workspaceId]);
-    await client.query(`DELETE FROM channel_members    WHERE workspace_id = $1`, [workspaceId]);
-    await client.query(`DELETE FROM channels           WHERE workspace_id = $1`, [workspaceId]);
-    await client.query(`DELETE FROM role_assignments   WHERE workspace_id = $1`, [workspaceId]);
-    await client.query(`DELETE FROM workspaces         WHERE workspace_id = $1`, [workspaceId]);
+    await client.query(
+      `DELETE FROM follow_up_items   WHERE workspace_id = $1`,
+      [workspaceId],
+    );
+    await client.query(
+      `DELETE FROM follow_up_rules   WHERE workspace_id = $1`,
+      [workspaceId],
+    );
+    await client.query(
+      `DELETE FROM intelligence_degradation_events WHERE workspace_id = $1`,
+      [workspaceId],
+    );
+    await client.query(
+      `DELETE FROM message_intelligence_state WHERE workspace_id = $1`,
+      [workspaceId],
+    );
+    await client.query(
+      `DELETE FROM summary_artifacts    WHERE workspace_id = $1`,
+      [workspaceId],
+    );
+    await client.query(
+      `DELETE FROM backfill_runs        WHERE workspace_id = $1`,
+      [workspaceId],
+    );
+    await client.query(
+      `DELETE FROM message_analytics  WHERE workspace_id = $1`,
+      [workspaceId],
+    );
+    await client.query(
+      `DELETE FROM context_documents  WHERE workspace_id = $1`,
+      [workspaceId],
+    );
+    await client.query(
+      `DELETE FROM llm_costs          WHERE workspace_id = $1`,
+      [workspaceId],
+    );
+    await client.query(
+      `DELETE FROM thread_edges       WHERE workspace_id = $1`,
+      [workspaceId],
+    );
+    await client.query(
+      `DELETE FROM messages           WHERE workspace_id = $1`,
+      [workspaceId],
+    );
+    await client.query(
+      `DELETE FROM channel_state      WHERE workspace_id = $1`,
+      [workspaceId],
+    );
+    await client.query(
+      `DELETE FROM channel_members    WHERE workspace_id = $1`,
+      [workspaceId],
+    );
+    await client.query(
+      `DELETE FROM channels           WHERE workspace_id = $1`,
+      [workspaceId],
+    );
+    await client.query(
+      `DELETE FROM role_assignments   WHERE workspace_id = $1`,
+      [workspaceId],
+    );
+    await client.query(
+      `DELETE FROM workspaces         WHERE workspace_id = $1`,
+      [workspaceId],
+    );
     await client.query("COMMIT");
   } catch (err) {
     await client.query("ROLLBACK");
@@ -402,8 +620,20 @@ export async function upsertMessage(
   threadTs?: string | null,
   subtype?: string | null,
   botId?: string | null,
-  filesJson?: Array<{ name: string; title?: string; mimetype?: string; filetype?: string; size?: number; permalink?: string }> | null,
-  linksJson?: Array<{ url: string; domain: string; label?: string; linkType: string }> | null,
+  filesJson?: Array<{
+    name: string;
+    title?: string;
+    mimetype?: string;
+    filetype?: string;
+    size?: number;
+    permalink?: string;
+  }> | null,
+  linksJson?: Array<{
+    url: string;
+    domain: string;
+    label?: string;
+    linkType: string;
+  }> | null,
 ): Promise<MessageRow> {
   const result = await pool.query<MessageRow>(
     `INSERT INTO messages (workspace_id, channel_id, ts, user_id, text, source, analysis_status, thread_ts, subtype, bot_id, files_json, links_json)
@@ -420,7 +650,19 @@ export async function upsertMessage(
            links_json = COALESCE(EXCLUDED.links_json, messages.links_json),
            updated_at = NOW()
      RETURNING *`,
-    [workspaceId, channelId, ts, userId, text, source, threadTs ?? null, subtype ?? null, botId ?? null, filesJson ? JSON.stringify(filesJson) : null, linksJson ? JSON.stringify(linksJson) : null],
+    [
+      workspaceId,
+      channelId,
+      ts,
+      userId,
+      text,
+      source,
+      threadTs ?? null,
+      subtype ?? null,
+      botId ?? null,
+      filesJson ? JSON.stringify(filesJson) : null,
+      linksJson ? JSON.stringify(linksJson) : null,
+    ],
   );
   return result.rows[0];
 }
@@ -502,6 +744,26 @@ export async function getMessageCount(
   return parseInt(result.rows[0].count, 10);
 }
 
+export async function getMessageCountInWindow(
+  workspaceId: string,
+  channelId: string,
+  windowDays: number,
+): Promise<number> {
+  const safeWindowDays = Math.max(
+    1,
+    Math.min(PRODUCT_WINDOW_POLICY.archiveWindowDays, Math.trunc(windowDays)),
+  );
+  const result = await pool.query<{ count: string }>(
+    `SELECT COUNT(*) as count
+     FROM messages
+     WHERE workspace_id = $1
+       AND channel_id = $2
+       AND TO_TIMESTAMP(ts::double precision) >= NOW() - MAKE_INTERVAL(days => $3::int)`,
+    [workspaceId, channelId, safeWindowDays],
+  );
+  return parseInt(result.rows[0].count, 10);
+}
+
 export async function getChannelParticipantCounts(
   workspaceId: string,
   channelId: string,
@@ -542,7 +804,9 @@ export async function getThreads(
   workspaceId: string,
   channelId: string,
   limit = 20,
-): Promise<Array<{ thread_ts: string; reply_count: number; last_activity: string }>> {
+): Promise<
+  Array<{ thread_ts: string; reply_count: number; last_activity: string }>
+> {
   const result = await pool.query<{
     thread_ts: string;
     reply_count: string;
@@ -596,7 +860,17 @@ export async function upsertUserProfile(
            is_bot = EXCLUDED.is_bot,
            fetched_at = NOW()
      RETURNING *`,
-    [workspaceId, userId, displayName, realName, profileImage, email, isAdmin, isOwner, isBot],
+    [
+      workspaceId,
+      userId,
+      displayName,
+      realName,
+      profileImage,
+      email,
+      isAdmin,
+      isOwner,
+      isBot,
+    ],
   );
   return result.rows[0];
 }
@@ -626,6 +900,28 @@ export async function getUserProfiles(
   return result.rows;
 }
 
+export async function getUserProfilesByEmails(
+  workspaceId: string,
+  emails: string[],
+): Promise<UserProfileRow[]> {
+  const normalizedEmails = Array.from(
+    new Set(
+      emails
+        .map((email) => email.trim().toLowerCase())
+        .filter((email) => email.length > 0),
+    ),
+  );
+  if (normalizedEmails.length === 0) return [];
+
+  const result = await pool.query<UserProfileRow>(
+    `SELECT * FROM user_profiles
+     WHERE workspace_id = $1
+       AND lower(email) = ANY($2)`,
+    [workspaceId, normalizedEmails],
+  );
+  return result.rows;
+}
+
 // ─── Enriched messages ──────────────────────────────────────────────────────
 
 const FOLLOW_UP_COLUMNS = `,
@@ -634,6 +930,26 @@ const FOLLOW_UP_COLUMNS = `,
             fu.summary AS fu_summary,
             fu.due_at AS fu_due_at,
             fu.repeated_ask_count AS fu_repeated_ask_count`;
+
+const INTELLIGENCE_STATE_COLUMNS = `,
+            mis.id AS intelligence_state_id,
+            mis.eligibility_status AS analysis_eligibility,
+            mis.execution_status AS analysis_execution,
+            mis.quality_status AS analysis_quality,
+            mis.suppression_reason AS suppression_reason,
+            mis.provider_name AS analysis_provider_name,
+            mis.provider_model AS analysis_provider_model,
+            mis.attempt_count AS analysis_attempt_count,
+            mis.last_attempt_at AS analysis_last_attempt_at,
+            mis.completed_at AS analysis_completed_at,
+            mis.recovered_at AS analysis_recovered_at,
+            mis.last_error AS analysis_last_error`;
+
+const INTELLIGENCE_STATE_JOIN = `
+     LEFT JOIN message_intelligence_state mis
+       ON mis.workspace_id = m.workspace_id
+      AND mis.channel_id = m.channel_id
+      AND mis.message_ts = m.ts`;
 
 const TRIAGE_COLUMNS = `,
             mt.candidate_kind AS mt_candidate_kind,
@@ -683,9 +999,19 @@ const TRIAGE_JOIN = `
 export async function getMessagesEnriched(
   workspaceId: string,
   channelId: string,
-  options: { limit?: number; threadTs?: string | null; participantId?: string | null } = {},
+  options: {
+    limit?: number;
+    threadTs?: string | null;
+    participantId?: string | null;
+    afterTs?: string | null;
+  } = {},
 ): Promise<EnrichedMessageWithAnalyticsRow[]> {
   const limit = Math.max(1, Math.min(200, options.limit ?? 50));
+  const afterTs =
+    typeof options.afterTs === "string" &&
+    Number.isFinite(Number.parseFloat(options.afterTs))
+      ? options.afterTs
+      : null;
 
   const analyticsColumns = `,
             ma.dominant_emotion AS ma_dominant_emotion,
@@ -705,61 +1031,96 @@ export async function getMessagesEnriched(
        ON ma.workspace_id = m.workspace_id AND ma.channel_id = m.channel_id AND ma.message_ts = m.ts`;
 
   if (options.threadTs && options.participantId) {
+    const params: unknown[] = [
+      workspaceId,
+      channelId,
+      options.threadTs,
+      options.participantId,
+    ];
+    let afterFilter = "";
+    if (afterTs) {
+      params.push(afterTs);
+      afterFilter = ` AND m.ts::double precision >= $${params.length}::double precision`;
+    }
+    params.push(limit);
     const result = await pool.query<EnrichedMessageWithAnalyticsRow>(
-      `SELECT m.*, up.display_name, up.real_name${analyticsColumns}${FOLLOW_UP_COLUMNS}${TRIAGE_COLUMNS}
+      `SELECT m.*, up.display_name, up.real_name${INTELLIGENCE_STATE_COLUMNS}${analyticsColumns}${FOLLOW_UP_COLUMNS}${TRIAGE_COLUMNS}
        FROM messages m
        LEFT JOIN user_profiles up
-         ON up.workspace_id = m.workspace_id AND up.user_id = m.user_id${analyticsJoin}${FOLLOW_UP_LATERAL_JOIN}${TRIAGE_JOIN}
+         ON up.workspace_id = m.workspace_id AND up.user_id = m.user_id${INTELLIGENCE_STATE_JOIN}${analyticsJoin}${FOLLOW_UP_LATERAL_JOIN}${TRIAGE_JOIN}
        WHERE m.workspace_id = $1
          AND m.channel_id = $2
          AND m.thread_ts = $3
          AND m.user_id = $4
+         ${afterFilter}
        ORDER BY m.ts::double precision ASC
-       LIMIT $5`,
-      [workspaceId, channelId, options.threadTs, options.participantId, limit],
+       LIMIT $${params.length}`,
+      params,
     );
     return result.rows;
   }
 
   if (options.threadTs) {
+    const params: unknown[] = [workspaceId, channelId, options.threadTs];
+    let afterFilter = "";
+    if (afterTs) {
+      params.push(afterTs);
+      afterFilter = ` AND m.ts::double precision >= $${params.length}::double precision`;
+    }
+    params.push(limit);
     const result = await pool.query<EnrichedMessageWithAnalyticsRow>(
-      `SELECT m.*, up.display_name, up.real_name${analyticsColumns}${FOLLOW_UP_COLUMNS}${TRIAGE_COLUMNS}
+      `SELECT m.*, up.display_name, up.real_name${INTELLIGENCE_STATE_COLUMNS}${analyticsColumns}${FOLLOW_UP_COLUMNS}${TRIAGE_COLUMNS}
        FROM messages m
        LEFT JOIN user_profiles up
-         ON up.workspace_id = m.workspace_id AND up.user_id = m.user_id${analyticsJoin}${FOLLOW_UP_LATERAL_JOIN}${TRIAGE_JOIN}
-       WHERE m.workspace_id = $1 AND m.channel_id = $2 AND m.thread_ts = $3
+         ON up.workspace_id = m.workspace_id AND up.user_id = m.user_id${INTELLIGENCE_STATE_JOIN}${analyticsJoin}${FOLLOW_UP_LATERAL_JOIN}${TRIAGE_JOIN}
+       WHERE m.workspace_id = $1 AND m.channel_id = $2 AND m.thread_ts = $3${afterFilter}
        ORDER BY m.ts::double precision ASC
-       LIMIT $4`,
-      [workspaceId, channelId, options.threadTs, limit],
+       LIMIT $${params.length}`,
+      params,
     );
     return result.rows;
   }
 
   if (options.participantId) {
+    const params: unknown[] = [workspaceId, channelId, options.participantId];
+    let afterFilter = "";
+    if (afterTs) {
+      params.push(afterTs);
+      afterFilter = ` AND m.ts::double precision >= $${params.length}::double precision`;
+    }
+    params.push(limit);
     const result = await pool.query<EnrichedMessageWithAnalyticsRow>(
-      `SELECT m.*, up.display_name, up.real_name${analyticsColumns}${FOLLOW_UP_COLUMNS}${TRIAGE_COLUMNS}
+      `SELECT m.*, up.display_name, up.real_name${INTELLIGENCE_STATE_COLUMNS}${analyticsColumns}${FOLLOW_UP_COLUMNS}${TRIAGE_COLUMNS}
        FROM messages m
        LEFT JOIN user_profiles up
-         ON up.workspace_id = m.workspace_id AND up.user_id = m.user_id${analyticsJoin}${FOLLOW_UP_LATERAL_JOIN}${TRIAGE_JOIN}
+         ON up.workspace_id = m.workspace_id AND up.user_id = m.user_id${INTELLIGENCE_STATE_JOIN}${analyticsJoin}${FOLLOW_UP_LATERAL_JOIN}${TRIAGE_JOIN}
        WHERE m.workspace_id = $1
          AND m.channel_id = $2
          AND m.user_id = $3
+         ${afterFilter}
        ORDER BY m.ts::double precision DESC
-       LIMIT $4`,
-      [workspaceId, channelId, options.participantId, limit],
+       LIMIT $${params.length}`,
+      params,
     );
     return result.rows.reverse();
   }
 
+  const params: unknown[] = [workspaceId, channelId];
+  let afterFilter = "";
+  if (afterTs) {
+    params.push(afterTs);
+    afterFilter = ` AND m.ts::double precision >= $${params.length}::double precision`;
+  }
+  params.push(limit);
   const result = await pool.query<EnrichedMessageWithAnalyticsRow>(
-    `SELECT m.*, up.display_name, up.real_name${analyticsColumns}${FOLLOW_UP_COLUMNS}${TRIAGE_COLUMNS}
+    `SELECT m.*, up.display_name, up.real_name${INTELLIGENCE_STATE_COLUMNS}${analyticsColumns}${FOLLOW_UP_COLUMNS}${TRIAGE_COLUMNS}
      FROM messages m
      LEFT JOIN user_profiles up
-       ON up.workspace_id = m.workspace_id AND up.user_id = m.user_id${analyticsJoin}${FOLLOW_UP_LATERAL_JOIN}${TRIAGE_JOIN}
-     WHERE m.workspace_id = $1 AND m.channel_id = $2
+       ON up.workspace_id = m.workspace_id AND up.user_id = m.user_id${INTELLIGENCE_STATE_JOIN}${analyticsJoin}${FOLLOW_UP_LATERAL_JOIN}${TRIAGE_JOIN}
+     WHERE m.workspace_id = $1 AND m.channel_id = $2${afterFilter}
      ORDER BY m.ts::double precision DESC
-     LIMIT $3`,
-    [workspaceId, channelId, limit],
+     LIMIT $${params.length}`,
+    params,
   );
   return result.rows.reverse();
 }
@@ -772,7 +1133,7 @@ export async function getMessagesEnrichedByTs(
   if (messageTs.length === 0) return [];
 
   const result = await pool.query<EnrichedMessageWithAnalyticsRow>(
-    `SELECT m.*, up.display_name, up.real_name,
+    `SELECT m.*, up.display_name, up.real_name${INTELLIGENCE_STATE_COLUMNS},
             ma.dominant_emotion AS ma_dominant_emotion,
             ma.interaction_tone AS ma_interaction_tone,
             ma.confidence AS ma_confidence,
@@ -804,6 +1165,10 @@ export async function getMessagesEnrichedByTs(
      FROM messages m
      LEFT JOIN user_profiles up
        ON up.workspace_id = m.workspace_id AND up.user_id = m.user_id
+     LEFT JOIN message_intelligence_state mis
+       ON mis.workspace_id = m.workspace_id
+      AND mis.channel_id = m.channel_id
+      AND mis.message_ts = m.ts
      LEFT JOIN message_analytics ma
        ON ma.workspace_id = m.workspace_id AND ma.channel_id = m.channel_id AND ma.message_ts = m.ts
      LEFT JOIN message_triage mt
@@ -844,22 +1209,38 @@ export async function getMessagesEnrichedByTs(
 export async function getTopLevelMessagesEnriched(
   workspaceId: string,
   channelId: string,
-  limit: number = 50,
-  escalationRisk?: string[],
+  options: {
+    limit?: number;
+    escalationRisk?: string[];
+    afterTs?: string | null;
+  } = {},
 ): Promise<(EnrichedMessageWithAnalyticsRow & { reply_count: number })[]> {
-  const safeLimit = Math.max(1, Math.min(200, limit));
+  const safeLimit = Math.max(1, Math.min(200, options.limit ?? 50));
+  const afterTs =
+    typeof options.afterTs === "string" &&
+    Number.isFinite(Number.parseFloat(options.afterTs))
+      ? options.afterTs
+      : null;
   const params: unknown[] = [workspaceId, channelId];
   let riskFilter = "";
 
-  if (escalationRisk && escalationRisk.length > 0) {
-    params.push(escalationRisk);
+  if (options.escalationRisk && options.escalationRisk.length > 0) {
+    params.push(options.escalationRisk);
     riskFilter = `AND ma.escalation_risk = ANY($${params.length})`;
+  }
+
+  let afterFilter = "";
+  if (afterTs) {
+    params.push(afterTs);
+    afterFilter = `AND m.ts::double precision >= $${params.length}::double precision`;
   }
 
   params.push(safeLimit);
 
-  const result = await pool.query<EnrichedMessageWithAnalyticsRow & { reply_count: string }>(
-    `SELECT m.*, up.display_name, up.real_name,
+  const result = await pool.query<
+    EnrichedMessageWithAnalyticsRow & { reply_count: string }
+  >(
+    `SELECT m.*, up.display_name, up.real_name${INTELLIGENCE_STATE_COLUMNS},
             COALESCE(tc.cnt, 0) AS reply_count,
             ma.dominant_emotion AS ma_dominant_emotion,
             ma.interaction_tone AS ma_interaction_tone,
@@ -892,6 +1273,10 @@ export async function getTopLevelMessagesEnriched(
      FROM messages m
      LEFT JOIN user_profiles up
        ON up.workspace_id = m.workspace_id AND up.user_id = m.user_id
+     LEFT JOIN message_intelligence_state mis
+       ON mis.workspace_id = m.workspace_id
+      AND mis.channel_id = m.channel_id
+      AND mis.message_ts = m.ts
      LEFT JOIN (
        SELECT thread_ts, COUNT(*) AS cnt
        FROM thread_edges
@@ -927,6 +1312,7 @@ export async function getTopLevelMessagesEnriched(
      WHERE m.workspace_id = $1
        AND m.channel_id = $2
        AND (m.thread_ts IS NULL OR m.thread_ts = m.ts)
+       ${afterFilter}
        ${riskFilter}
      ORDER BY m.ts::double precision DESC
      LIMIT $${params.length}`,
@@ -949,7 +1335,7 @@ export async function getTopLevelMessagesAroundTsEnriched(
 
   const result = await pool.query<EnrichedMessageWithAnalyticsRow>(
     `WITH ordered_messages AS (
-       SELECT m.*, up.display_name, up.real_name,
+       SELECT m.*, up.display_name, up.real_name${INTELLIGENCE_STATE_COLUMNS},
               ma.dominant_emotion AS ma_dominant_emotion,
               ma.interaction_tone AS ma_interaction_tone,
               ma.confidence AS ma_confidence,
@@ -982,6 +1368,10 @@ export async function getTopLevelMessagesAroundTsEnriched(
        FROM messages m
        LEFT JOIN user_profiles up
          ON up.workspace_id = m.workspace_id AND up.user_id = m.user_id
+       LEFT JOIN message_intelligence_state mis
+         ON mis.workspace_id = m.workspace_id
+        AND mis.channel_id = m.channel_id
+        AND mis.message_ts = m.ts
        LEFT JOIN message_analytics ma
          ON ma.workspace_id = m.workspace_id AND ma.channel_id = m.channel_id AND ma.message_ts = m.ts
        LEFT JOIN message_triage mt
@@ -1042,8 +1432,10 @@ export async function getRecentWorkspaceTopLevelMessagesEnriched(
   limit: number = 120,
 ): Promise<WorkspaceTopLevelMessageRow[]> {
   const safeLimit = Math.max(1, Math.min(250, limit));
-  const result = await pool.query<WorkspaceTopLevelMessageRow & { reply_count: string }>(
-    `SELECT m.*, up.display_name, up.real_name,
+  const result = await pool.query<
+    WorkspaceTopLevelMessageRow & { reply_count: string }
+  >(
+    `SELECT m.*, up.display_name, up.real_name${INTELLIGENCE_STATE_COLUMNS},
             c.name AS channel_name,
             c.conversation_type,
             COALESCE(tc.cnt, 0) AS reply_count,
@@ -1082,6 +1474,10 @@ export async function getRecentWorkspaceTopLevelMessagesEnriched(
      LEFT JOIN user_profiles up
        ON up.workspace_id = m.workspace_id
       AND up.user_id = m.user_id
+     LEFT JOIN message_intelligence_state mis
+       ON mis.workspace_id = m.workspace_id
+      AND mis.channel_id = m.channel_id
+      AND mis.message_ts = m.ts
      LEFT JOIN (
        SELECT thread_ts, channel_id, workspace_id, COUNT(*) AS cnt
        FROM thread_edges
@@ -1141,7 +1537,7 @@ export async function getThreadRepliesEnriched(
   threadTs: string,
 ): Promise<EnrichedMessageWithAnalyticsRow[]> {
   const result = await pool.query<EnrichedMessageWithAnalyticsRow>(
-    `SELECT m.*, up.display_name, up.real_name,
+    `SELECT m.*, up.display_name, up.real_name${INTELLIGENCE_STATE_COLUMNS},
             ma.dominant_emotion AS ma_dominant_emotion,
             ma.interaction_tone AS ma_interaction_tone,
             ma.confidence AS ma_confidence,
@@ -1173,6 +1569,10 @@ export async function getThreadRepliesEnriched(
      FROM messages m
      LEFT JOIN user_profiles up
        ON up.workspace_id = m.workspace_id AND up.user_id = m.user_id
+     LEFT JOIN message_intelligence_state mis
+       ON mis.workspace_id = m.workspace_id
+      AND mis.channel_id = m.channel_id
+      AND mis.message_ts = m.ts
      LEFT JOIN message_analytics ma
        ON ma.workspace_id = m.workspace_id AND ma.channel_id = m.channel_id AND ma.message_ts = m.ts
      LEFT JOIN message_triage mt
@@ -1206,7 +1606,9 @@ export async function getActiveThreads(
   workspaceId: string,
   channelId: string,
   hoursBack: number = 24,
-): Promise<Array<{ thread_ts: string; reply_count: number; last_activity: string }>> {
+): Promise<
+  Array<{ thread_ts: string; reply_count: number; last_activity: string }>
+> {
   const result = await pool.query<{
     thread_ts: string;
     reply_count: string;
@@ -1231,6 +1633,41 @@ export async function getActiveThreads(
   }));
 }
 
+export async function getActiveThreadsSinceTs(
+  workspaceId: string,
+  channelId: string,
+  afterTs: string,
+  limit: number = 50,
+): Promise<
+  Array<{ thread_ts: string; reply_count: number; last_activity: string }>
+> {
+  const safeLimit = Math.max(1, Math.min(200, limit));
+  const result = await pool.query<{
+    thread_ts: string;
+    reply_count: string;
+    last_activity: Date | string;
+  }>(
+    `SELECT m.thread_ts,
+            COUNT(*) AS reply_count,
+            MAX(TO_TIMESTAMP(m.ts::double precision)) AS last_activity
+     FROM messages m
+     WHERE m.workspace_id = $1
+       AND m.channel_id = $2
+       AND m.thread_ts IS NOT NULL
+     GROUP BY m.thread_ts
+     HAVING MAX(TO_TIMESTAMP(m.ts::double precision)) >= TO_TIMESTAMP($3::double precision)
+     ORDER BY MAX(TO_TIMESTAMP(m.ts::double precision)) DESC NULLS LAST
+     LIMIT $4`,
+    [workspaceId, channelId, afterTs, safeLimit],
+  );
+
+  return result.rows.map((row) => ({
+    thread_ts: row.thread_ts,
+    reply_count: parseInt(row.reply_count, 10),
+    last_activity: toIsoTimestamp(row.last_activity),
+  }));
+}
+
 export async function getLatestThreadAnalysis(
   workspaceId: string,
   channelId: string,
@@ -1240,7 +1677,9 @@ export async function getLatestThreadAnalysis(
   sentimentTrajectory: "improving" | "stable" | "deteriorating" | null;
   threadSentiment: string | null;
 } | null> {
-  const result = await pool.query<{ raw_llm_response: Record<string, unknown> | null }>(
+  const result = await pool.query<{
+    raw_llm_response: Record<string, unknown> | null;
+  }>(
     `SELECT ma.raw_llm_response
      FROM message_analytics ma
      INNER JOIN messages m
@@ -1268,7 +1707,8 @@ export async function getLatestThreadAnalysis(
   return {
     summary: typeof raw.summary === "string" ? raw.summary : null,
     sentimentTrajectory,
-    threadSentiment: typeof raw.thread_sentiment === "string" ? raw.thread_sentiment : null,
+    threadSentiment:
+      typeof raw.thread_sentiment === "string" ? raw.thread_sentiment : null,
   };
 }
 
@@ -1505,15 +1945,21 @@ export async function getThreadInsightsBatch(
 export async function getRecentThreadInsights(
   workspaceId: string,
   limit: number = 25,
-): Promise<Array<ThreadInsightRow & {
-  channel_name: string | null;
-  conversation_type: ConversationType | null;
-}>> {
+): Promise<
+  Array<
+    ThreadInsightRow & {
+      channel_name: string | null;
+      conversation_type: ConversationType | null;
+    }
+  >
+> {
   const safeLimit = Math.max(1, Math.min(100, limit));
-  const result = await pool.query<ThreadInsightRow & {
-    channel_name: string | null;
-    conversation_type: ConversationType | null;
-  }>(
+  const result = await pool.query<
+    ThreadInsightRow & {
+      channel_name: string | null;
+      conversation_type: ConversationType | null;
+    }
+  >(
     `SELECT ti.*,
             c.name AS channel_name,
             c.conversation_type
@@ -1563,10 +2009,16 @@ export async function getLatestThreadRollup(
   // Support both JSON (new) and plain text (legacy) formats
   try {
     const parsed = JSON.parse(content);
-    if (typeof parsed === "object" && parsed !== null && typeof parsed.summary === "string") {
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      typeof parsed.summary === "string"
+    ) {
       return {
         summary: parsed.summary,
-        openQuestions: Array.isArray(parsed.openQuestions) ? parsed.openQuestions : [],
+        openQuestions: Array.isArray(parsed.openQuestions)
+          ? parsed.openQuestions
+          : [],
       };
     }
   } catch {
@@ -1588,9 +2040,12 @@ export async function getDistinctUserIds(
   return result.rows.map((r) => r.user_id);
 }
 
-export async function getReadyChannels(): Promise<ChannelRow[]> {
-  const result = await pool.query<ChannelRow>(
-    `SELECT * FROM channels WHERE status = 'ready'`,
+export async function getReadyChannels(): Promise<(ChannelRow & { last_reconcile_at?: string | null })[]> {
+  const result = await pool.query<ChannelRow & { last_reconcile_at?: string | null }>(
+    `SELECT c.*, cs.last_reconcile_at
+     FROM channels c
+     LEFT JOIN channel_state cs ON cs.workspace_id = c.workspace_id AND cs.channel_id = c.channel_id
+     WHERE c.status = 'ready'`,
   );
   return result.rows;
 }
@@ -1612,10 +2067,20 @@ export async function updateLastReconcileAt(
 export async function getChannelHealthCounts(
   workspaceId: string,
   channelId?: string,
+  options: {
+    windowDays?: number;
+  } = {},
 ): Promise<ChannelHealthCountsRow[]> {
+  const windowDays = Math.max(
+    1,
+    Math.min(
+      PRODUCT_WINDOW_POLICY.archiveWindowDays,
+      Math.trunc(options.windowDays ?? PRODUCT_WINDOW_POLICY.activeWindowDays),
+    ),
+  );
   const params: Array<string | number> = [
     workspaceId,
-    config.SUMMARY_WINDOW_DAYS,
+    windowDays,
   ];
   let channelFilter = "";
   if (channelId) {
@@ -1625,7 +2090,7 @@ export async function getChannelHealthCounts(
   const result = await pool.query<ChannelHealthCountsRow>(
     `SELECT
        c.channel_id,
-       COALESCE(fur.analysis_window_days, $2::int) AS analysis_window_days,
+       $2::int AS analysis_window_days,
        (SELECT COUNT(*) FROM follow_up_items fui
         WHERE fui.workspace_id = c.workspace_id AND fui.channel_id = c.channel_id
           AND fui.status = 'open'
@@ -1649,7 +2114,7 @@ export async function getChannelHealthCounts(
           AND mt.channel_id = c.channel_id
           AND mt.signal_type = 'operational_incident'
           AND TO_TIMESTAMP(m.ts::double precision) >= NOW() - MAKE_INTERVAL(
-            days => COALESCE(fur.analysis_window_days, $2::int)
+            days => $2::int
           )
        ) AS automation_incident_count,
        (SELECT COUNT(*) FROM message_triage mt
@@ -1672,7 +2137,7 @@ export async function getChannelHealthCounts(
           AND mt.signal_type = 'operational_incident'
           AND mt.severity = 'high'
           AND TO_TIMESTAMP(m.ts::double precision) >= NOW() - MAKE_INTERVAL(
-            days => COALESCE(fur.analysis_window_days, $2::int)
+            days => $2::int
           )
        ) AS critical_automation_incident_count,
        (SELECT COUNT(*) FROM message_triage mt
@@ -1695,7 +2160,7 @@ export async function getChannelHealthCounts(
           AND mt.channel_id = c.channel_id
           AND mt.signal_type = 'human_risk'
           AND TO_TIMESTAMP(m.ts::double precision) >= NOW() - MAKE_INTERVAL(
-            days => COALESCE(fur.analysis_window_days, $2::int)
+            days => $2::int
           )
        ) AS human_risk_signal_count,
        (SELECT COUNT(*) FROM message_triage mt
@@ -1707,7 +2172,7 @@ export async function getChannelHealthCounts(
           AND mt.channel_id = c.channel_id
           AND mt.signal_type = 'request'
           AND TO_TIMESTAMP(m.ts::double precision) >= NOW() - MAKE_INTERVAL(
-            days => COALESCE(fur.analysis_window_days, $2::int)
+            days => $2::int
           )
        ) AS request_signal_count,
        (SELECT COUNT(*) FROM message_triage mt
@@ -1719,7 +2184,7 @@ export async function getChannelHealthCounts(
           AND mt.channel_id = c.channel_id
           AND mt.signal_type = 'decision'
           AND TO_TIMESTAMP(m.ts::double precision) >= NOW() - MAKE_INTERVAL(
-            days => COALESCE(fur.analysis_window_days, $2::int)
+            days => $2::int
           )
        ) AS decision_signal_count,
        (SELECT COUNT(*) FROM message_triage mt
@@ -1731,7 +2196,7 @@ export async function getChannelHealthCounts(
           AND mt.channel_id = c.channel_id
           AND mt.signal_type = 'resolution'
           AND TO_TIMESTAMP(m.ts::double precision) >= NOW() - MAKE_INTERVAL(
-            days => COALESCE(fur.analysis_window_days, $2::int)
+            days => $2::int
           )
        ) AS resolution_signal_count,
        (SELECT COUNT(*) FROM message_analytics ma
@@ -1742,7 +2207,7 @@ export async function getChannelHealthCounts(
         WHERE ma.workspace_id = c.workspace_id AND ma.channel_id = c.channel_id
           AND ma.escalation_risk IN ('medium', 'high')
           AND TO_TIMESTAMP(m.ts::double precision) >= NOW() - MAKE_INTERVAL(
-            days => COALESCE(fur.analysis_window_days, $2::int)
+            days => $2::int
           )
        ) AS flagged_message_count,
        (SELECT COUNT(*) FROM message_analytics ma
@@ -1753,7 +2218,7 @@ export async function getChannelHealthCounts(
        WHERE ma.workspace_id = c.workspace_id AND ma.channel_id = c.channel_id
           AND ma.escalation_risk = 'high'
           AND TO_TIMESTAMP(m.ts::double precision) >= NOW() - MAKE_INTERVAL(
-            days => COALESCE(fur.analysis_window_days, $2::int)
+            days => $2::int
           )
        ) AS high_risk_message_count
        ,
@@ -1764,7 +2229,7 @@ export async function getChannelHealthCounts(
             WHEN ti.source_ts_end IS NOT NULL THEN TO_TIMESTAMP(ti.source_ts_end::double precision)
             ELSE ti.updated_at
           END >= NOW() - MAKE_INTERVAL(
-            days => COALESCE(fur.analysis_window_days, $2::int)
+            days => $2::int
           )
           AND (
             ti.thread_state IN ('blocked', 'escalated')
@@ -1786,7 +2251,7 @@ export async function getChannelHealthCounts(
             WHEN ti.source_ts_end IS NOT NULL THEN TO_TIMESTAMP(ti.source_ts_end::double precision)
             ELSE ti.updated_at
           END >= NOW() - MAKE_INTERVAL(
-            days => COALESCE(fur.analysis_window_days, $2::int)
+            days => $2::int
           )
        ) AS blocked_thread_count
        ,
@@ -1798,7 +2263,7 @@ export async function getChannelHealthCounts(
             WHEN ti.source_ts_end IS NOT NULL THEN TO_TIMESTAMP(ti.source_ts_end::double precision)
             ELSE ti.updated_at
           END >= NOW() - MAKE_INTERVAL(
-            days => COALESCE(fur.analysis_window_days, $2::int)
+            days => $2::int
           )
        ) AS escalated_thread_count
        ,
@@ -1810,7 +2275,7 @@ export async function getChannelHealthCounts(
             WHEN ti.source_ts_end IS NOT NULL THEN TO_TIMESTAMP(ti.source_ts_end::double precision)
             ELSE ti.updated_at
           END >= NOW() - MAKE_INTERVAL(
-            days => COALESCE(fur.analysis_window_days, $2::int)
+            days => $2::int
           )
        ) AS risky_thread_count
        ,
@@ -1818,7 +2283,7 @@ export async function getChannelHealthCounts(
         WHERE m.workspace_id = c.workspace_id
           AND m.channel_id = c.channel_id
           AND TO_TIMESTAMP(m.ts::double precision) >= NOW() - MAKE_INTERVAL(
-            days => COALESCE(fur.analysis_window_days, $2::int)
+            days => $2::int
           )
        ) AS total_message_count,
        (SELECT COUNT(*) FROM messages m
@@ -1826,7 +2291,7 @@ export async function getChannelHealthCounts(
           AND m.channel_id = c.channel_id
           AND m.analysis_status = 'skipped'
           AND TO_TIMESTAMP(m.ts::double precision) >= NOW() - MAKE_INTERVAL(
-            days => COALESCE(fur.analysis_window_days, $2::int)
+            days => $2::int
           )
        ) AS skipped_message_count,
        (SELECT COUNT(*) FROM message_triage mt
@@ -1838,7 +2303,7 @@ export async function getChannelHealthCounts(
           AND mt.channel_id = c.channel_id
           AND mt.signal_type = 'context'
           AND TO_TIMESTAMP(m.ts::double precision) >= NOW() - MAKE_INTERVAL(
-            days => COALESCE(fur.analysis_window_days, $2::int)
+            days => $2::int
           )
        ) AS context_only_message_count,
        (SELECT COUNT(*) FROM message_triage mt
@@ -1850,7 +2315,7 @@ export async function getChannelHealthCounts(
           AND mt.channel_id = c.channel_id
           AND mt.signal_type = 'ignore'
           AND TO_TIMESTAMP(m.ts::double precision) >= NOW() - MAKE_INTERVAL(
-            days => COALESCE(fur.analysis_window_days, $2::int)
+            days => $2::int
           )
        ) AS ignored_message_count,
        (SELECT COUNT(*) FROM messages m
@@ -1858,7 +2323,7 @@ export async function getChannelHealthCounts(
           AND m.channel_id = c.channel_id
           AND m.analysis_status IN ('pending', 'processing')
           AND TO_TIMESTAMP(m.ts::double precision) >= NOW() - MAKE_INTERVAL(
-            days => COALESCE(fur.analysis_window_days, $2::int)
+            days => $2::int
           )
        ) AS inflight_message_count,
        (SELECT COUNT(*) FROM message_analytics ma
@@ -1868,7 +2333,7 @@ export async function getChannelHealthCounts(
          AND m.ts = ma.message_ts
         WHERE ma.workspace_id = c.workspace_id AND ma.channel_id = c.channel_id
           AND TO_TIMESTAMP(m.ts::double precision) >= NOW() - MAKE_INTERVAL(
-            days => COALESCE(fur.analysis_window_days, $2::int)
+            days => $2::int
           )
        ) AS total_analyzed_count,
        (SELECT COUNT(*) FROM message_analytics ma
@@ -1879,7 +2344,7 @@ export async function getChannelHealthCounts(
         WHERE ma.workspace_id = c.workspace_id AND ma.channel_id = c.channel_id
           AND ma.dominant_emotion = 'anger'
           AND TO_TIMESTAMP(m.ts::double precision) >= NOW() - MAKE_INTERVAL(
-            days => COALESCE(fur.analysis_window_days, $2::int)
+            days => $2::int
           )
        ) AS anger_count,
        (SELECT COUNT(*) FROM message_analytics ma
@@ -1890,7 +2355,7 @@ export async function getChannelHealthCounts(
         WHERE ma.workspace_id = c.workspace_id AND ma.channel_id = c.channel_id
           AND ma.dominant_emotion = 'joy'
           AND TO_TIMESTAMP(m.ts::double precision) >= NOW() - MAKE_INTERVAL(
-            days => COALESCE(fur.analysis_window_days, $2::int)
+            days => $2::int
           )
        ) AS joy_count,
        (SELECT COUNT(*) FROM message_analytics ma
@@ -1901,7 +2366,7 @@ export async function getChannelHealthCounts(
         WHERE ma.workspace_id = c.workspace_id AND ma.channel_id = c.channel_id
           AND ma.dominant_emotion = 'sadness'
           AND TO_TIMESTAMP(m.ts::double precision) >= NOW() - MAKE_INTERVAL(
-            days => COALESCE(fur.analysis_window_days, $2::int)
+            days => $2::int
           )
        ) AS sadness_count,
        (SELECT COUNT(*) FROM message_analytics ma
@@ -1912,7 +2377,7 @@ export async function getChannelHealthCounts(
         WHERE ma.workspace_id = c.workspace_id AND ma.channel_id = c.channel_id
           AND ma.dominant_emotion = 'neutral'
           AND TO_TIMESTAMP(m.ts::double precision) >= NOW() - MAKE_INTERVAL(
-            days => COALESCE(fur.analysis_window_days, $2::int)
+            days => $2::int
           )
        ) AS neutral_count,
        (SELECT COUNT(*) FROM message_analytics ma
@@ -1923,7 +2388,7 @@ export async function getChannelHealthCounts(
         WHERE ma.workspace_id = c.workspace_id AND ma.channel_id = c.channel_id
           AND ma.dominant_emotion = 'fear'
           AND TO_TIMESTAMP(m.ts::double precision) >= NOW() - MAKE_INTERVAL(
-            days => COALESCE(fur.analysis_window_days, $2::int)
+            days => $2::int
           )
        ) AS fear_count,
        (SELECT COUNT(*) FROM message_analytics ma
@@ -1934,7 +2399,7 @@ export async function getChannelHealthCounts(
         WHERE ma.workspace_id = c.workspace_id AND ma.channel_id = c.channel_id
           AND ma.dominant_emotion = 'surprise'
           AND TO_TIMESTAMP(m.ts::double precision) >= NOW() - MAKE_INTERVAL(
-            days => COALESCE(fur.analysis_window_days, $2::int)
+            days => $2::int
           )
        ) AS surprise_count,
        (SELECT COUNT(*) FROM message_analytics ma
@@ -1945,13 +2410,10 @@ export async function getChannelHealthCounts(
         WHERE ma.workspace_id = c.workspace_id AND ma.channel_id = c.channel_id
           AND ma.dominant_emotion = 'disgust'
           AND TO_TIMESTAMP(m.ts::double precision) >= NOW() - MAKE_INTERVAL(
-            days => COALESCE(fur.analysis_window_days, $2::int)
+            days => $2::int
           )
        ) AS disgust_count
      FROM channels c
-     LEFT JOIN follow_up_rules fur
-       ON fur.workspace_id = c.workspace_id
-      AND fur.channel_id = c.channel_id
      WHERE c.workspace_id = $1 ${channelFilter}`,
     params,
   );
@@ -1967,6 +2429,10 @@ export async function upsertChannelState(
     Pick<
       ChannelStateRow,
       | "running_summary"
+      | "live_summary"
+      | "live_summary_updated_at"
+      | "live_summary_source_ts_start"
+      | "live_summary_source_ts_end"
       | "participants_json"
       | "active_threads_json"
       | "key_decisions_json"
@@ -1979,49 +2445,129 @@ export async function upsertChannelState(
       | "effective_channel_mode"
       | "sentiment_snapshot_json"
       | "messages_since_last_llm"
+      | "ingest_readiness"
+      | "intelligence_readiness"
+      | "current_summary_artifact_id"
+      | "active_backfill_run_id"
+      | "active_degradation_count"
     >
   >,
 ): Promise<void> {
+  const updatesCurrentSummaryArtifactId = Object.prototype.hasOwnProperty.call(
+    updates,
+    "current_summary_artifact_id",
+  );
+  const updatesActiveBackfillRunId = Object.prototype.hasOwnProperty.call(
+    updates,
+    "active_backfill_run_id",
+  );
+
   await pool.query(
     `INSERT INTO channel_state (workspace_id, channel_id,
-       running_summary, participants_json, active_threads_json,
+       running_summary, live_summary, live_summary_updated_at, live_summary_source_ts_start,
+       live_summary_source_ts_end, participants_json, active_threads_json,
        key_decisions_json, signal, health, signal_confidence, risk_drivers_json,
        attention_summary_json, message_disposition_counts_json, effective_channel_mode,
-       sentiment_snapshot_json, messages_since_last_llm)
-     VALUES ($1, $2, COALESCE($3, ''), COALESCE($4::jsonb, '{}'), COALESCE($5::jsonb, '[]'),
-             COALESCE($6::jsonb, '[]'), $7, $8, $9, COALESCE($10::jsonb, '[]'),
-             $11::jsonb, $12::jsonb, $13, COALESCE($14::jsonb, '{}'), COALESCE($15, 0))
+       sentiment_snapshot_json, messages_since_last_llm, ingest_readiness,
+       intelligence_readiness, current_summary_artifact_id, active_backfill_run_id,
+       active_degradation_count)
+     VALUES ($1, $2, COALESCE($3, ''), COALESCE($4, ''), $5, $6, $7,
+             COALESCE($8::jsonb, '{}'), COALESCE($9::jsonb, '[]'),
+             COALESCE($10::jsonb, '[]'), $11, $12, $13, COALESCE($14::jsonb, '[]'),
+             $15::jsonb, $16::jsonb, $17, COALESCE($18::jsonb, '{}'), COALESCE($19, 0),
+             COALESCE($20, 'not_started'), COALESCE($21, 'missing'), $22, $23,
+             COALESCE($24, 0))
      ON CONFLICT (workspace_id, channel_id) DO UPDATE
        SET running_summary = COALESCE($3, channel_state.running_summary),
-           participants_json = COALESCE($4::jsonb, channel_state.participants_json),
-           active_threads_json = COALESCE($5::jsonb, channel_state.active_threads_json),
-           key_decisions_json = COALESCE($6::jsonb, channel_state.key_decisions_json),
-           signal = COALESCE($7, channel_state.signal),
-           health = COALESCE($8, channel_state.health),
-           signal_confidence = COALESCE($9, channel_state.signal_confidence),
-           risk_drivers_json = COALESCE($10::jsonb, channel_state.risk_drivers_json),
-           attention_summary_json = COALESCE($11::jsonb, channel_state.attention_summary_json),
-           message_disposition_counts_json = COALESCE($12::jsonb, channel_state.message_disposition_counts_json),
-           effective_channel_mode = COALESCE($13, channel_state.effective_channel_mode),
-           sentiment_snapshot_json = COALESCE($14::jsonb, channel_state.sentiment_snapshot_json),
-           messages_since_last_llm = COALESCE($15, channel_state.messages_since_last_llm),
+           live_summary = COALESCE($4, channel_state.live_summary),
+           live_summary_updated_at = COALESCE($5, channel_state.live_summary_updated_at),
+           live_summary_source_ts_start = COALESCE($6, channel_state.live_summary_source_ts_start),
+           live_summary_source_ts_end = COALESCE($7, channel_state.live_summary_source_ts_end),
+           participants_json = COALESCE($8::jsonb, channel_state.participants_json),
+           active_threads_json = COALESCE($9::jsonb, channel_state.active_threads_json),
+           key_decisions_json = COALESCE($10::jsonb, channel_state.key_decisions_json),
+           signal = COALESCE($11, channel_state.signal),
+           health = COALESCE($12, channel_state.health),
+           signal_confidence = COALESCE($13, channel_state.signal_confidence),
+           risk_drivers_json = COALESCE($14::jsonb, channel_state.risk_drivers_json),
+           attention_summary_json = COALESCE($15::jsonb, channel_state.attention_summary_json),
+           message_disposition_counts_json = COALESCE($16::jsonb, channel_state.message_disposition_counts_json),
+           effective_channel_mode = COALESCE($17, channel_state.effective_channel_mode),
+           sentiment_snapshot_json = COALESCE($18::jsonb, channel_state.sentiment_snapshot_json),
+           messages_since_last_llm = COALESCE($19, channel_state.messages_since_last_llm),
+           ingest_readiness = COALESCE($20, channel_state.ingest_readiness),
+           intelligence_readiness = COALESCE($21, channel_state.intelligence_readiness),
+           current_summary_artifact_id = CASE
+             WHEN $25 THEN $22
+             ELSE channel_state.current_summary_artifact_id
+           END,
+           active_backfill_run_id = CASE
+             WHEN $26 THEN $23
+             ELSE channel_state.active_backfill_run_id
+           END,
+           active_degradation_count = COALESCE($24, channel_state.active_degradation_count),
            updated_at = NOW()`,
     [
       workspaceId,
       channelId,
       updates.running_summary !== undefined ? updates.running_summary : null,
-      updates.participants_json !== undefined ? JSON.stringify(updates.participants_json) : null,
-      updates.active_threads_json !== undefined ? JSON.stringify(updates.active_threads_json) : null,
-      updates.key_decisions_json !== undefined ? JSON.stringify(updates.key_decisions_json) : null,
+      updates.live_summary !== undefined ? updates.live_summary : null,
+      updates.live_summary_updated_at !== undefined
+        ? updates.live_summary_updated_at
+        : null,
+      updates.live_summary_source_ts_start !== undefined
+        ? updates.live_summary_source_ts_start
+        : null,
+      updates.live_summary_source_ts_end !== undefined
+        ? updates.live_summary_source_ts_end
+        : null,
+      updates.participants_json !== undefined
+        ? JSON.stringify(updates.participants_json)
+        : null,
+      updates.active_threads_json !== undefined
+        ? JSON.stringify(updates.active_threads_json)
+        : null,
+      updates.key_decisions_json !== undefined
+        ? JSON.stringify(updates.key_decisions_json)
+        : null,
       updates.signal !== undefined ? updates.signal : null,
       updates.health !== undefined ? updates.health : null,
-      updates.signal_confidence !== undefined ? updates.signal_confidence : null,
-      updates.risk_drivers_json !== undefined ? JSON.stringify(updates.risk_drivers_json) : null,
-      updates.attention_summary_json !== undefined ? JSON.stringify(updates.attention_summary_json) : null,
-      updates.message_disposition_counts_json !== undefined ? JSON.stringify(updates.message_disposition_counts_json) : null,
-      updates.effective_channel_mode !== undefined ? updates.effective_channel_mode : null,
-      updates.sentiment_snapshot_json !== undefined ? JSON.stringify(updates.sentiment_snapshot_json) : null,
-      updates.messages_since_last_llm !== undefined ? updates.messages_since_last_llm : null,
+      updates.signal_confidence !== undefined
+        ? updates.signal_confidence
+        : null,
+      updates.risk_drivers_json !== undefined
+        ? JSON.stringify(updates.risk_drivers_json)
+        : null,
+      updates.attention_summary_json !== undefined
+        ? JSON.stringify(updates.attention_summary_json)
+        : null,
+      updates.message_disposition_counts_json !== undefined
+        ? JSON.stringify(updates.message_disposition_counts_json)
+        : null,
+      updates.effective_channel_mode !== undefined
+        ? updates.effective_channel_mode
+        : null,
+      updates.sentiment_snapshot_json !== undefined
+        ? JSON.stringify(updates.sentiment_snapshot_json)
+        : null,
+      updates.messages_since_last_llm !== undefined
+        ? updates.messages_since_last_llm
+        : null,
+      updates.ingest_readiness !== undefined ? updates.ingest_readiness : null,
+      updates.intelligence_readiness !== undefined
+        ? updates.intelligence_readiness
+        : null,
+      updates.current_summary_artifact_id !== undefined
+        ? updates.current_summary_artifact_id
+        : null,
+      updates.active_backfill_run_id !== undefined
+        ? updates.active_backfill_run_id
+        : null,
+      updates.active_degradation_count !== undefined
+        ? updates.active_degradation_count
+        : null,
+      updatesCurrentSummaryArtifactId,
+      updatesActiveBackfillRunId,
     ],
   );
 }
@@ -2062,6 +2608,624 @@ export async function incrementMessageCounters(
      WHERE workspace_id = $1 AND channel_id = $2`,
     [workspaceId, channelId],
   );
+}
+
+// ─── Intelligence truth model ──────────────────────────────────────────────
+
+export interface MessageIntelligenceStateUpsertInput {
+  workspaceId: string;
+  channelId: string;
+  messageTs: string;
+  eligibilityStatus?: MessageIntelligenceEligibilityStatus | null;
+  executionStatus?: MessageIntelligenceExecutionStatus | null;
+  qualityStatus?: MessageIntelligenceQualityStatus | null;
+  suppressionReason?: MessageIntelligenceSuppressionReason | null;
+  providerName?: string | null;
+  providerModel?: string | null;
+  attemptCountDelta?: number | null;
+  lastAttemptAt?: Date | string | null;
+  completedAt?: Date | string | null;
+  recoveredAt?: Date | string | null;
+  lastError?: string | null;
+  lastErrorAt?: Date | string | null;
+}
+
+export async function upsertMessageIntelligenceState(
+  input: MessageIntelligenceStateUpsertInput,
+): Promise<MessageIntelligenceStateRow> {
+  const result = await pool.query<MessageIntelligenceStateRow>(
+    `INSERT INTO message_intelligence_state (
+       workspace_id, channel_id, message_ts, eligibility_status, execution_status,
+       quality_status, suppression_reason, provider_name, provider_model,
+       attempt_count, last_attempt_at, completed_at, recovered_at, last_error, last_error_at
+     ) VALUES ($1, $2, $3, COALESCE($4, 'eligible'), COALESCE($5, 'not_run'),
+               COALESCE($6, 'none'), $7, $8, $9, COALESCE($10, 0), $11, $12, $13, $14, $15)
+     ON CONFLICT (workspace_id, channel_id, message_ts) DO UPDATE
+       SET eligibility_status = COALESCE(EXCLUDED.eligibility_status, message_intelligence_state.eligibility_status),
+           execution_status = COALESCE(EXCLUDED.execution_status, message_intelligence_state.execution_status),
+           quality_status = COALESCE(EXCLUDED.quality_status, message_intelligence_state.quality_status),
+           suppression_reason = COALESCE(EXCLUDED.suppression_reason, message_intelligence_state.suppression_reason),
+           provider_name = COALESCE(EXCLUDED.provider_name, message_intelligence_state.provider_name),
+           provider_model = COALESCE(EXCLUDED.provider_model, message_intelligence_state.provider_model),
+           attempt_count = message_intelligence_state.attempt_count + COALESCE(EXCLUDED.attempt_count, 0),
+           last_attempt_at = COALESCE(EXCLUDED.last_attempt_at, message_intelligence_state.last_attempt_at),
+           completed_at = COALESCE(EXCLUDED.completed_at, message_intelligence_state.completed_at),
+           recovered_at = COALESCE(EXCLUDED.recovered_at, message_intelligence_state.recovered_at),
+           last_error = COALESCE(EXCLUDED.last_error, message_intelligence_state.last_error),
+           last_error_at = COALESCE(EXCLUDED.last_error_at, message_intelligence_state.last_error_at),
+           updated_at = NOW()
+     RETURNING *`,
+    [
+      input.workspaceId,
+      input.channelId,
+      input.messageTs,
+      input.eligibilityStatus ?? null,
+      input.executionStatus ?? null,
+      input.qualityStatus ?? null,
+      input.suppressionReason ?? null,
+      input.providerName ?? null,
+      input.providerModel ?? null,
+      input.attemptCountDelta ?? 0,
+      input.lastAttemptAt ?? null,
+      input.completedAt ?? null,
+      input.recoveredAt ?? null,
+      input.lastError ?? null,
+      input.lastErrorAt ?? null,
+    ],
+  );
+
+  return result.rows[0];
+}
+
+export async function getMessageIntelligenceState(
+  workspaceId: string,
+  channelId: string,
+  messageTs: string,
+): Promise<MessageIntelligenceStateRow | null> {
+  const result = await pool.query<MessageIntelligenceStateRow>(
+    `SELECT *
+     FROM message_intelligence_state
+     WHERE workspace_id = $1
+       AND channel_id = $2
+       AND message_ts = $3
+     LIMIT 1`,
+    [workspaceId, channelId, messageTs],
+  );
+
+  return result.rows[0] ?? null;
+}
+
+export async function getMessageIntelligenceStates(
+  workspaceId: string,
+  channelId: string,
+  messageTs: string[],
+): Promise<MessageIntelligenceStateRow[]> {
+  if (messageTs.length === 0) return [];
+
+  const result = await pool.query<MessageIntelligenceStateRow>(
+    `SELECT *
+     FROM message_intelligence_state
+     WHERE workspace_id = $1
+       AND channel_id = $2
+       AND message_ts = ANY($3)
+     ORDER BY message_ts::double precision ASC`,
+    [workspaceId, channelId, messageTs],
+  );
+
+  return result.rows;
+}
+
+export function projectLegacyAnalysisStatusFromTruth(input: {
+  eligibilityStatus?: MessageIntelligenceEligibilityStatus | null;
+  executionStatus?: MessageIntelligenceExecutionStatus | null;
+  qualityStatus?: MessageIntelligenceQualityStatus | null;
+  suppressionReason?: MessageIntelligenceSuppressionReason | null;
+}): AnalysisStatus {
+  return deriveLegacyAnalysisStatus(input);
+}
+
+export interface SummaryArtifactInsertInput {
+  workspaceId: string;
+  channelId: string;
+  summaryKind: SummaryArtifactKind;
+  generationMode: SummaryArtifactGenerationMode;
+  completenessStatus?: SummaryArtifactCompletenessStatus | null;
+  summary: string;
+  keyDecisionsJson?: string[] | null;
+  summaryFactsJson?: SummaryFact[] | null;
+  degradedReasonsJson?: string[] | null;
+  coverageStartTs?: string | null;
+  coverageEndTs?: string | null;
+  candidateMessageCount?: number | null;
+  includedMessageCount?: number | null;
+  artifactVersion?: number | null;
+  sourceRunId?: string | null;
+}
+
+export async function insertSummaryArtifact(
+  input: SummaryArtifactInsertInput,
+): Promise<SummaryArtifactRow> {
+  const result = await pool.query<SummaryArtifactRow>(
+    `INSERT INTO summary_artifacts (
+       workspace_id, channel_id, summary_kind, generation_mode, completeness_status,
+       summary, key_decisions_json, summary_facts_json, degraded_reasons_json,
+       coverage_start_ts, coverage_end_ts, candidate_message_count,
+       included_message_count, artifact_version, source_run_id
+     ) VALUES ($1, $2, $3, $4, COALESCE($5, 'complete'), $6, COALESCE($7::jsonb, '[]'::jsonb),
+              COALESCE($8::jsonb, '[]'::jsonb), COALESCE($9::jsonb, '[]'::jsonb),
+              $10, $11, COALESCE($12, 0), COALESCE($13, 0),
+              COALESCE($14, 1), $15)
+     RETURNING *`,
+    [
+      input.workspaceId,
+      input.channelId,
+      input.summaryKind,
+      input.generationMode,
+      input.completenessStatus ?? null,
+      input.summary,
+      input.keyDecisionsJson ? JSON.stringify(input.keyDecisionsJson) : null,
+      input.summaryFactsJson ? JSON.stringify(input.summaryFactsJson) : null,
+      JSON.stringify(normalizeDegradedReasons(input.degradedReasonsJson)),
+      input.coverageStartTs ?? null,
+      input.coverageEndTs ?? null,
+      input.candidateMessageCount ?? null,
+      input.includedMessageCount ?? null,
+      input.artifactVersion ?? null,
+      input.sourceRunId ?? null,
+    ],
+  );
+
+  return result.rows[0];
+}
+
+export async function getSummaryArtifact(
+  workspaceId: string,
+  channelId: string,
+  artifactId: string,
+): Promise<SummaryArtifactRow | null> {
+  const result = await pool.query<SummaryArtifactRow>(
+    `SELECT *
+     FROM summary_artifacts
+     WHERE workspace_id = $1
+       AND channel_id = $2
+       AND id = $3
+     LIMIT 1`,
+    [workspaceId, channelId, artifactId],
+  );
+
+  return result.rows[0] ?? null;
+}
+
+export async function getLatestSummaryArtifact(
+  workspaceId: string,
+  channelId: string,
+  summaryKind?: SummaryArtifactKind | null,
+): Promise<SummaryArtifactRow | null> {
+  const params: unknown[] = [workspaceId, channelId];
+  let kindFilter = "";
+  if (summaryKind) {
+    params.push(summaryKind);
+    kindFilter = `AND summary_kind = $3`;
+  }
+
+  const result = await pool.query<SummaryArtifactRow>(
+    `SELECT *
+     FROM summary_artifacts
+     WHERE workspace_id = $1
+       AND channel_id = $2
+       ${kindFilter}
+     ORDER BY created_at DESC, updated_at DESC
+     LIMIT 1`,
+    params,
+  );
+
+  return result.rows[0] ?? null;
+}
+
+export async function markSummaryArtifactSuperseded(
+  workspaceId: string,
+  channelId: string,
+  artifactId: string,
+  supersededByArtifactId: string | null,
+): Promise<void> {
+  await pool.query(
+    `UPDATE summary_artifacts
+     SET superseded_at = NOW(),
+         superseded_by_artifact_id = $4,
+         updated_at = NOW()
+     WHERE workspace_id = $1
+       AND channel_id = $2
+       AND id = $3`,
+    [workspaceId, channelId, artifactId, supersededByArtifactId],
+  );
+}
+
+export async function getSummaryArtifactsNeedingReconciliation(
+  staleMinutes: number,
+  limit = 50,
+): Promise<SummaryArtifactRow[]> {
+  const result = await pool.query<SummaryArtifactRow>(
+    `SELECT *
+     FROM summary_artifacts
+     WHERE completeness_status IN ('partial', 'stale')
+        OR COALESCE(jsonb_array_length(degraded_reasons_json), 0) > 0
+        OR updated_at < NOW() - MAKE_INTERVAL(mins => $1)
+     ORDER BY updated_at ASC
+     LIMIT $2`,
+    [staleMinutes, limit],
+  );
+
+  return result.rows;
+}
+
+export interface BackfillRunInsertInput {
+  workspaceId: string;
+  channelId: string;
+  status?: BackfillRunStatus | null;
+  currentPhase?: BackfillRunPhase | null;
+  pagesFetched?: number | null;
+  messagesImported?: number | null;
+  threadRootsDiscovered?: number | null;
+  threadsAttempted?: number | null;
+  threadsFailed?: number | null;
+  usersResolved?: number | null;
+  memberSyncResult?: BackfillMemberSyncResult | null;
+  summaryArtifactId?: string | null;
+  degradedReasonCount?: number | null;
+  lastError?: string | null;
+}
+
+export async function insertBackfillRun(
+  input: BackfillRunInsertInput,
+): Promise<BackfillRunRow> {
+  const result = await pool.query<BackfillRunRow>(
+    `INSERT INTO backfill_runs (
+       workspace_id, channel_id, status, current_phase, pages_fetched,
+       messages_imported, thread_roots_discovered, threads_attempted,
+       threads_failed, users_resolved, member_sync_result, summary_artifact_id,
+       degraded_reason_count, last_error
+     ) VALUES ($1, $2, COALESCE($3, 'running'), COALESCE($4, 'history_import'),
+              COALESCE($5, 0), COALESCE($6, 0), COALESCE($7, 0), COALESCE($8, 0),
+              COALESCE($9, 0), COALESCE($10, 0), COALESCE($11, 'not_started'),
+              $12, COALESCE($13, 0), $14)
+     RETURNING *`,
+    [
+      input.workspaceId,
+      input.channelId,
+      input.status ?? null,
+      input.currentPhase ?? null,
+      input.pagesFetched ?? null,
+      input.messagesImported ?? null,
+      input.threadRootsDiscovered ?? null,
+      input.threadsAttempted ?? null,
+      input.threadsFailed ?? null,
+      input.usersResolved ?? null,
+      input.memberSyncResult ?? null,
+      input.summaryArtifactId ?? null,
+      input.degradedReasonCount ?? null,
+      input.lastError ?? null,
+    ],
+  );
+
+  return result.rows[0];
+}
+
+export async function updateBackfillRun(
+  workspaceId: string,
+  channelId: string,
+  runId: string,
+  updates: Partial<
+    Pick<
+      BackfillRunRow,
+      | "status"
+      | "current_phase"
+      | "pages_fetched"
+      | "messages_imported"
+      | "thread_roots_discovered"
+      | "threads_attempted"
+      | "threads_failed"
+      | "users_resolved"
+      | "member_sync_result"
+      | "summary_artifact_id"
+      | "degraded_reason_count"
+      | "last_error"
+      | "completed_at"
+    >
+  >,
+): Promise<BackfillRunRow | null> {
+  const result = await pool.query<BackfillRunRow>(
+    `UPDATE backfill_runs
+     SET status = COALESCE($4, status),
+         current_phase = COALESCE($5, current_phase),
+         pages_fetched = COALESCE($6, pages_fetched),
+         messages_imported = COALESCE($7, messages_imported),
+         thread_roots_discovered = COALESCE($8, thread_roots_discovered),
+         threads_attempted = COALESCE($9, threads_attempted),
+         threads_failed = COALESCE($10, threads_failed),
+         users_resolved = COALESCE($11, users_resolved),
+         member_sync_result = COALESCE($12, member_sync_result),
+         summary_artifact_id = COALESCE($13, summary_artifact_id),
+         degraded_reason_count = COALESCE($14, degraded_reason_count),
+         last_error = COALESCE($15, last_error),
+         completed_at = COALESCE($16, completed_at),
+         updated_at = NOW()
+     WHERE workspace_id = $1
+       AND channel_id = $2
+       AND id = $3
+     RETURNING *`,
+    [
+      workspaceId,
+      channelId,
+      runId,
+      updates.status ?? null,
+      updates.current_phase ?? null,
+      updates.pages_fetched ?? null,
+      updates.messages_imported ?? null,
+      updates.thread_roots_discovered ?? null,
+      updates.threads_attempted ?? null,
+      updates.threads_failed ?? null,
+      updates.users_resolved ?? null,
+      updates.member_sync_result ?? null,
+      updates.summary_artifact_id ?? null,
+      updates.degraded_reason_count ?? null,
+      updates.last_error ?? null,
+      updates.completed_at ?? null,
+    ],
+  );
+
+  return result.rows[0] ?? null;
+}
+
+export async function getBackfillRun(
+  workspaceId: string,
+  channelId: string,
+  runId: string,
+): Promise<BackfillRunRow | null> {
+  const result = await pool.query<BackfillRunRow>(
+    `SELECT *
+     FROM backfill_runs
+     WHERE workspace_id = $1
+       AND channel_id = $2
+       AND id = $3
+     LIMIT 1`,
+    [workspaceId, channelId, runId],
+  );
+
+  return result.rows[0] ?? null;
+}
+
+export async function getLatestBackfillRun(
+  workspaceId: string,
+  channelId: string,
+): Promise<BackfillRunRow | null> {
+  const result = await pool.query<BackfillRunRow>(
+    `SELECT *
+     FROM backfill_runs
+     WHERE workspace_id = $1
+       AND channel_id = $2
+     ORDER BY started_at DESC, updated_at DESC
+     LIMIT 1`,
+    [workspaceId, channelId],
+  );
+
+  return result.rows[0] ?? null;
+}
+
+export async function getActiveBackfillRun(
+  workspaceId: string,
+  channelId: string,
+): Promise<BackfillRunRow | null> {
+  const result = await pool.query<BackfillRunRow>(
+    `SELECT *
+     FROM backfill_runs
+     WHERE workspace_id = $1
+       AND channel_id = $2
+       AND status = 'running'
+     ORDER BY started_at DESC
+     LIMIT 1`,
+    [workspaceId, channelId],
+  );
+
+  return result.rows[0] ?? null;
+}
+
+export interface IntelligenceDegradationEventInsertInput {
+  workspaceId: string;
+  channelId: string;
+  scopeType: IntelligenceDegradationScopeType;
+  scopeKey?: string | null;
+  messageTs?: string | null;
+  threadTs?: string | null;
+  summaryArtifactId?: string | null;
+  backfillRunId?: string | null;
+  degradationType: IntelligenceDegradationType;
+  severity?: IntelligenceDegradationSeverity | null;
+  detailsJson?: Record<string, unknown> | null;
+  dedupeKey?: string | null;
+  isActive?: boolean | null;
+  supersededByEventId?: string | null;
+  resolvedAt?: Date | string | null;
+}
+
+export async function insertIntelligenceDegradationEvent(
+  input: IntelligenceDegradationEventInsertInput,
+): Promise<IntelligenceDegradationEventRow> {
+  const result = await pool.query<IntelligenceDegradationEventRow>(
+    `INSERT INTO intelligence_degradation_events (
+       workspace_id, channel_id, scope_type, scope_key, message_ts, thread_ts,
+       summary_artifact_id, backfill_run_id, degradation_type, severity, details_json,
+       dedupe_key, is_active, superseded_by_event_id, resolved_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+              COALESCE($10, 'warning'), COALESCE($11::jsonb, '{}'::jsonb),
+              $12, COALESCE($13, TRUE), $14, $15)
+     ON CONFLICT (workspace_id, dedupe_key) DO UPDATE
+       SET scope_type = EXCLUDED.scope_type,
+           scope_key = EXCLUDED.scope_key,
+           message_ts = EXCLUDED.message_ts,
+           thread_ts = EXCLUDED.thread_ts,
+           summary_artifact_id = EXCLUDED.summary_artifact_id,
+           backfill_run_id = EXCLUDED.backfill_run_id,
+           degradation_type = EXCLUDED.degradation_type,
+           severity = EXCLUDED.severity,
+           details_json = EXCLUDED.details_json,
+           is_active = EXCLUDED.is_active,
+           superseded_by_event_id = EXCLUDED.superseded_by_event_id,
+           resolved_at = EXCLUDED.resolved_at,
+           updated_at = NOW()
+     RETURNING *`,
+    [
+      input.workspaceId,
+      input.channelId,
+      input.scopeType,
+      input.scopeKey ?? null,
+      input.messageTs ?? null,
+      input.threadTs ?? null,
+      input.summaryArtifactId ?? null,
+      input.backfillRunId ?? null,
+      input.degradationType,
+      input.severity ?? null,
+      input.detailsJson ? JSON.stringify(input.detailsJson) : null,
+      input.dedupeKey ?? null,
+      input.isActive ?? null,
+      input.supersededByEventId ?? null,
+      input.resolvedAt ?? null,
+    ],
+  );
+
+  return result.rows[0];
+}
+
+export async function resolveIntelligenceDegradationEvent(
+  workspaceId: string,
+  channelId: string,
+  eventId: string,
+  supersededByEventId?: string | null,
+): Promise<void> {
+  await pool.query(
+    `UPDATE intelligence_degradation_events
+     SET is_active = FALSE,
+         superseded_by_event_id = COALESCE($4, superseded_by_event_id),
+         resolved_at = NOW(),
+         updated_at = NOW()
+     WHERE workspace_id = $1
+       AND channel_id = $2
+       AND id = $3`,
+    [workspaceId, channelId, eventId, supersededByEventId ?? null],
+  );
+}
+
+export async function getActiveIntelligenceDegradationEvents(
+  workspaceId: string,
+  channelId: string,
+): Promise<IntelligenceDegradationEventRow[]> {
+  const result = await pool.query<IntelligenceDegradationEventRow>(
+    `SELECT *
+     FROM intelligence_degradation_events
+     WHERE workspace_id = $1
+       AND channel_id = $2
+       AND is_active = TRUE
+     ORDER BY created_at DESC`,
+    [workspaceId, channelId],
+  );
+
+  return result.rows;
+}
+
+export interface ChannelTruthDiagnostics {
+  channelState: ChannelStateRow | null;
+  summaryArtifact: SummaryArtifactRow | null;
+  backfillRun: BackfillRunRow | null;
+  activeDegradationEvents: IntelligenceDegradationEventRow[];
+  messageCounts: {
+    total: number;
+    eligible: number;
+    pending: number;
+    processing: number;
+    completed: number;
+    failed: number;
+    suppressed: number;
+    partial: number;
+  };
+  ingestReadiness: IngestReadiness;
+  intelligenceReadiness: IntelligenceReadiness;
+}
+
+export async function getChannelTruthDiagnostics(
+  workspaceId: string,
+  channelId: string,
+): Promise<ChannelTruthDiagnostics> {
+  const channelState = await getChannelState(workspaceId, channelId);
+  const [
+    summaryArtifact,
+    backfillRun,
+    activeDegradationEvents,
+    messageCountsResult,
+  ] = await Promise.all([
+    channelState?.current_summary_artifact_id
+      ? getSummaryArtifact(
+          workspaceId,
+          channelId,
+          channelState.current_summary_artifact_id,
+        )
+      : getLatestSummaryArtifact(workspaceId, channelId),
+    getActiveBackfillRun(workspaceId, channelId),
+    getActiveIntelligenceDegradationEvents(workspaceId, channelId),
+    pool.query<{
+      total_count: string;
+      eligible_count: string;
+      pending_count: string;
+      processing_count: string;
+      completed_count: string;
+      failed_count: string;
+      suppressed_count: string;
+      partial_count: string;
+    }>(
+      `SELECT
+           COUNT(*)::int AS total_count,
+           COUNT(*) FILTER (WHERE eligibility_status = 'eligible')::int AS eligible_count,
+           COUNT(*) FILTER (WHERE execution_status = 'pending')::int AS pending_count,
+           COUNT(*) FILTER (WHERE execution_status = 'processing')::int AS processing_count,
+           COUNT(*) FILTER (WHERE execution_status = 'completed')::int AS completed_count,
+           COUNT(*) FILTER (WHERE execution_status = 'failed')::int AS failed_count,
+           COUNT(*) FILTER (WHERE eligibility_status IN ('not_candidate', 'policy_suppressed', 'privacy_suppressed') OR suppression_reason IS NOT NULL)::int AS suppressed_count,
+           COUNT(*) FILTER (WHERE quality_status IN ('partial', 'fallback'))::int AS partial_count
+         FROM message_intelligence_state
+         WHERE workspace_id = $1
+           AND channel_id = $2`,
+      [workspaceId, channelId],
+    ),
+  ]);
+
+  const messageCounts = messageCountsResult.rows[0];
+  const activeDegradationCount = activeDegradationEvents.length;
+
+  return {
+    channelState,
+    summaryArtifact,
+    backfillRun,
+    activeDegradationEvents,
+    messageCounts: {
+      total: parseInt(messageCounts?.total_count ?? "0", 10),
+      eligible: parseInt(messageCounts?.eligible_count ?? "0", 10),
+      pending: parseInt(messageCounts?.pending_count ?? "0", 10),
+      processing: parseInt(messageCounts?.processing_count ?? "0", 10),
+      completed: parseInt(messageCounts?.completed_count ?? "0", 10),
+      failed: parseInt(messageCounts?.failed_count ?? "0", 10),
+      suppressed: parseInt(messageCounts?.suppressed_count ?? "0", 10),
+      partial: parseInt(messageCounts?.partial_count ?? "0", 10),
+    },
+    ingestReadiness:
+      channelState?.ingest_readiness ??
+      deriveIngestReadinessFromBackfillRun(
+        backfillRun ? { status: backfillRun.status } : null,
+      ),
+    intelligenceReadiness:
+      channelState?.intelligence_readiness ??
+      deriveIntelligenceReadinessFromArtifact({
+        completenessStatus: summaryArtifact?.completeness_status ?? null,
+        activeDegradationCount,
+      }),
+  };
 }
 
 // ─── LLM Analysis ──────────────────────────────────────────────────────────
@@ -2242,8 +3406,22 @@ export async function getStaleAnalysisCandidates(
       AND ma.message_ts = m.ts
      WHERE c.status = 'ready'
        AND ma.id IS NULL
-       AND m.analysis_status IN ('pending', 'processing', 'failed')
-       AND m.updated_at < NOW() - MAKE_INTERVAL(mins => $1)
+       AND (
+         -- Legacy: stale pending/processing/failed messages
+         (m.analysis_status IN ('pending', 'processing', 'failed')
+          AND m.updated_at < NOW() - MAKE_INTERVAL(mins => $1))
+         OR
+         -- Recovered messages: intelligence state was recently set to 'eligible' after recovery
+         EXISTS (
+           SELECT 1 FROM message_intelligence_state mis
+           WHERE mis.workspace_id = m.workspace_id
+             AND mis.channel_id = m.channel_id
+             AND mis.message_ts = m.ts
+             AND mis.eligibility_status = 'eligible'
+             AND mis.recovered_at IS NOT NULL
+             AND mis.execution_status = 'not_run'
+         )
+       )
      ORDER BY m.updated_at ASC
      LIMIT $2`,
     [staleMinutes, limit],
@@ -2252,10 +3430,92 @@ export async function getStaleAnalysisCandidates(
   return result.rows;
 }
 
+/**
+ * Find messages that were suppressed with "channel_not_ready" in channels
+ * that are NOW ready. These messages need to be re-queued for deep analysis.
+ */
+export async function getSuppressedMessagesInReadyChannels(
+  channelId?: string,
+  limit = 200,
+): Promise<Array<{ workspace_id: string; channel_id: string; message_ts: string; thread_ts: string | null }>> {
+  const channelFilter = channelId ? "AND mis.channel_id = $1" : "";
+  const params: (string | number)[] = channelId ? [channelId, limit] : [limit];
+  const limitParam = channelId ? "$2" : "$1";
+
+  const result = await pool.query<{
+    workspace_id: string;
+    channel_id: string;
+    message_ts: string;
+    thread_ts: string | null;
+  }>(
+    `SELECT mis.workspace_id, mis.channel_id, mis.message_ts, m.thread_ts
+     FROM message_intelligence_state mis
+     INNER JOIN channels c
+       ON c.workspace_id = mis.workspace_id
+      AND c.channel_id = mis.channel_id
+     LEFT JOIN messages m
+       ON m.workspace_id = mis.workspace_id
+      AND m.channel_id = mis.channel_id
+      AND m.ts = mis.message_ts
+     WHERE mis.eligibility_status = 'policy_suppressed'
+       AND mis.suppression_reason = 'channel_not_ready'
+       AND mis.execution_status = 'not_run'
+       AND c.status = 'ready'
+       ${channelFilter}
+     ORDER BY mis.created_at ASC
+     LIMIT ${limitParam}`,
+    params,
+  );
+  return result.rows;
+}
+
+/**
+ * Mark suppressed messages as recovered so they can be re-queued for analysis.
+ * Updates both message_intelligence_state and messages.analysis_status.
+ */
+export async function markSuppressedMessagesRecovered(
+  workspaceId: string,
+  channelId: string,
+  messageTimestamps: string[],
+): Promise<number> {
+  if (messageTimestamps.length === 0) return 0;
+
+  // Update intelligence state: suppressed → eligible
+  await pool.query(
+    `UPDATE message_intelligence_state
+     SET eligibility_status = 'eligible',
+         suppression_reason = NULL,
+         recovered_at = NOW(),
+         updated_at = NOW()
+     WHERE workspace_id = $1
+       AND channel_id = $2
+       AND message_ts = ANY($3)
+       AND eligibility_status = 'policy_suppressed'
+       AND suppression_reason = 'channel_not_ready'`,
+    [workspaceId, channelId, messageTimestamps],
+  );
+
+  // Update legacy analysis_status: skipped → pending (so reconciliation can find them)
+  const result = await pool.query(
+    `UPDATE messages
+     SET analysis_status = 'pending',
+         updated_at = NOW()
+     WHERE workspace_id = $1
+       AND channel_id = $2
+       AND ts = ANY($3)
+       AND analysis_status IN ('skipped', 'suppressed')`,
+    [workspaceId, channelId, messageTimestamps],
+  );
+
+  return result.rowCount ?? 0;
+}
+
 export async function markStaleBackfillMessagesSkipped(
   staleMinutes: number,
   limit = 200,
-): Promise<Array<{ workspace_id: string; channel_id: string; skipped_count: number }>> {
+): Promise<
+  Array<{ workspace_id: string; channel_id: string; skipped_count: number }>
+> {
   const result = await pool.query<{
     workspace_id: string;
     channel_id: string;
@@ -2271,11 +3531,17 @@ export async function markStaleBackfillMessagesSkipped(
          ON ma.workspace_id = m.workspace_id
         AND ma.channel_id = m.channel_id
         AND ma.message_ts = m.ts
+       LEFT JOIN message_intelligence_state mis
+         ON mis.workspace_id = m.workspace_id
+        AND mis.channel_id = m.channel_id
+        AND mis.message_ts = m.ts
        WHERE c.status = 'ready'
          AND m.source = 'backfill'
          AND ma.id IS NULL
          AND m.analysis_status IN ('pending', 'processing', 'failed')
          AND m.updated_at < NOW() - MAKE_INTERVAL(mins => $1)
+         -- Don't re-skip messages that were recently recovered for deep analysis
+         AND (mis.eligibility_status IS NULL OR mis.eligibility_status != 'eligible' OR mis.recovered_at IS NULL)
        ORDER BY m.updated_at ASC
        LIMIT $2
      ),
@@ -2305,7 +3571,11 @@ export async function markStaleBackfillMessagesSkipped(
 export async function getUnresolvedMessageTs(
   workspaceId: string,
   channelId: string,
-  options: { limit?: number; threadTs?: string | null; hoursBack?: number } = {},
+  options: {
+    limit?: number;
+    threadTs?: string | null;
+    hoursBack?: number;
+  } = {},
 ): Promise<string[]> {
   const limit = Math.max(1, Math.min(200, options.limit ?? 50));
   const maxHoursBack = 30 * 24;
@@ -2422,7 +3692,11 @@ export async function getMessageAnalyticsBatch(
 ): Promise<
   Pick<
     MessageAnalyticsRow,
-    "message_ts" | "message_intent" | "is_actionable" | "is_blocking" | "urgency_level"
+    | "message_ts"
+    | "message_intent"
+    | "is_actionable"
+    | "is_blocking"
+    | "urgency_level"
   >[]
 > {
   if (messageTimestamps.length === 0) return [];
@@ -2499,6 +3773,7 @@ export interface AnalyticsQueryOptions {
   threadTs?: string | null;
   emotion?: string | null;
   risk?: "low" | "medium" | "high" | "flagged" | null;
+  afterTs?: string | null;
 }
 
 export interface EnrichedAnalyticsRow extends MessageAnalyticsRow {
@@ -2519,13 +3794,14 @@ export async function getMessageAnalytics(
 ): Promise<EnrichedAnalyticsRow[]> {
   const limit = Math.max(1, Math.min(100, options.limit ?? 50));
   const offset = Math.max(0, options.offset ?? 0);
-  const analysisWindowDays = await getEffectiveAnalysisWindowDays(
-    workspaceId,
-    channelId,
-  );
-  const windowStartTs = String(
-    (Date.now() - analysisWindowDays * 86_400_000) / 1000,
-  );
+  const windowStartTs =
+    options.afterTs ??
+    String(
+      (Date.now() -
+        (await getEffectiveAnalysisWindowDays(workspaceId, channelId)) *
+          86_400_000) /
+        1000,
+    );
   const baseConditions: string[] = [
     "ma.workspace_id = $1",
     "ma.channel_id = $2",
@@ -2619,12 +3895,13 @@ export async function insertContextDocument(row: {
   sourceTsEnd: string | null;
   sourceThreadTs: string | null;
   messageCount: number;
+  summaryArtifactId?: string | null;
 }): Promise<void> {
   await pool.query(
     `INSERT INTO context_documents
        (workspace_id, channel_id, doc_type, content, token_count, embedding,
-        source_ts_start, source_ts_end, source_thread_ts, message_count)
-     VALUES ($1, $2, $3, $4, $5, $6::vector, $7, $8, $9, $10)`,
+        source_ts_start, source_ts_end, source_thread_ts, message_count, summary_artifact_id)
+     VALUES ($1, $2, $3, $4, $5, $6::vector, $7, $8, $9, $10, $11)`,
     [
       row.workspaceId,
       row.channelId,
@@ -2636,6 +3913,7 @@ export async function insertContextDocument(row: {
       row.sourceTsEnd,
       row.sourceThreadTs,
       row.messageCount,
+      row.summaryArtifactId ?? null,
     ],
   );
 }
@@ -2651,7 +3929,8 @@ export async function searchContextDocuments(
   const embeddingStr = `[${queryEmbedding.join(",")}]`;
   const result = await pool.query<ContextDocumentRow>(
     `SELECT id, workspace_id, channel_id, doc_type, content, token_count,
-            source_ts_start, source_ts_end, source_thread_ts, message_count, created_at
+            source_ts_start, source_ts_end, source_thread_ts, message_count,
+            summary_artifact_id, created_at
      FROM context_documents
      WHERE workspace_id = $1
        AND channel_id = $2
@@ -2764,10 +4043,13 @@ export async function getMessagesInWindow(
   limit: number = 500,
 ): Promise<MessageRow[]> {
   const safeLimit = Math.max(1, Math.min(1000, limit));
-  const windowStartEpoch = String((Date.now() - windowDays * 86_400_000) / 1000);
-  const effectiveAfterTs = afterTs && parseFloat(afterTs) > parseFloat(windowStartEpoch)
-    ? afterTs
-    : windowStartEpoch;
+  const windowStartEpoch = String(
+    (Date.now() - windowDays * 86_400_000) / 1000,
+  );
+  const effectiveAfterTs =
+    afterTs && parseFloat(afterTs) > parseFloat(windowStartEpoch)
+      ? afterTs
+      : windowStartEpoch;
 
   const result = await pool.query<MessageRow>(
     `SELECT * FROM messages
@@ -2778,6 +4060,33 @@ export async function getMessagesInWindow(
      LIMIT $4`,
     [workspaceId, channelId, effectiveAfterTs, safeLimit],
   );
+  return result.rows;
+}
+
+export async function listMessagesWithFathomLinksInWindow(
+  workspaceId: string,
+  windowDays: number,
+  limit: number = 1000,
+): Promise<Array<Pick<MessageRow, "channel_id" | "ts" | "user_id" | "text">>> {
+  const safeLimit = Math.max(1, Math.min(5000, limit));
+  const windowStartEpoch = String(
+    (Date.now() - windowDays * 86_400_000) / 1000,
+  );
+
+  const result = await pool.query<
+    Pick<MessageRow, "channel_id" | "ts" | "user_id" | "text">
+  >(
+    `SELECT channel_id, ts, user_id, text
+     FROM messages
+     WHERE workspace_id = $1
+       AND bot_id IS NULL
+       AND ts::double precision > $2::double precision
+       AND text ~* 'https?://fathom\\.video/share/[A-Za-z0-9_-]+'
+     ORDER BY ts::double precision DESC
+     LIMIT $3`,
+    [workspaceId, windowStartEpoch, safeLimit],
+  );
+
   return result.rows;
 }
 
@@ -2890,12 +4199,16 @@ export async function getSentimentTrends(
     idx++;
   }
   if (options.from) {
-    conditions.push(`TO_TIMESTAMP(m.ts::double precision) >= $${idx}::timestamptz`);
+    conditions.push(
+      `TO_TIMESTAMP(m.ts::double precision) >= $${idx}::timestamptz`,
+    );
     params.push(options.from);
     idx++;
   }
   if (options.to) {
-    conditions.push(`TO_TIMESTAMP(m.ts::double precision) <= $${idx}::timestamptz`);
+    conditions.push(
+      `TO_TIMESTAMP(m.ts::double precision) <= $${idx}::timestamptz`,
+    );
     params.push(options.to);
     idx++;
   }
@@ -2940,7 +4253,8 @@ export async function getSentimentTrends(
   );
 
   return result.rows.map((r) => ({
-    bucket: r.bucket instanceof Date ? r.bucket.toISOString() : String(r.bucket),
+    bucket:
+      r.bucket instanceof Date ? r.bucket.toISOString() : String(r.bucket),
     total: parseInt(String(r.total), 10),
     emotions: {
       anger: parseInt(String(r.anger_count), 10),
@@ -3095,7 +4409,8 @@ export async function getCostBreakdown(
   );
 
   return result.rows.map((r) => ({
-    day: r.day instanceof Date ? r.day.toISOString().slice(0, 10) : String(r.day),
+    day:
+      r.day instanceof Date ? r.day.toISOString().slice(0, 10) : String(r.day),
     llmProvider: r.llm_provider,
     llmModel: r.llm_model,
     jobType: r.job_type,
@@ -3171,7 +4486,9 @@ export async function getUserSentimentSummaries(
     // Frustration = (negative ratio * 70) + (high risk involvement * 30), capped at 100
     const negativeRatio = total > 0 ? negCount / total : 0;
     const riskPenalty = Math.min(30, highRisk * 10);
-    const frustrationScore = Math.round(Math.min(100, negativeRatio * 70 + riskPenalty));
+    const frustrationScore = Math.round(
+      Math.min(100, negativeRatio * 70 + riskPenalty),
+    );
 
     return {
       userId: r.user_id,
@@ -3200,17 +4517,16 @@ export async function getAnalyticsOverview(
     followUpResult,
     highSeverityFollowUpResult,
     flaggedMessageResult,
-  ] =
-    await Promise.all([
-      pool.query<{ count: string }>(
-        `SELECT COUNT(*) AS count
+  ] = await Promise.all([
+    pool.query<{ count: string }>(
+      `SELECT COUNT(*) AS count
          FROM messages
          WHERE workspace_id = $1
            AND TO_TIMESTAMP(ts::double precision) >= ${recentWindowSql}`,
-        [workspaceId],
-      ),
-      pool.query<{ count: string }>(
-        `SELECT COUNT(*) AS count
+      [workspaceId],
+    ),
+    pool.query<{ count: string }>(
+      `SELECT COUNT(*) AS count
          FROM message_analytics ma
          INNER JOIN messages m
            ON m.workspace_id = ma.workspace_id
@@ -3218,10 +4534,10 @@ export async function getAnalyticsOverview(
           AND m.ts = ma.message_ts
          WHERE ma.workspace_id = $1
            AND TO_TIMESTAMP(m.ts::double precision) >= ${recentWindowSql}`,
-        [workspaceId],
-      ),
-      pool.query<{ dominant_emotion: string; count: string }>(
-        `SELECT ma.dominant_emotion, COUNT(*) AS count
+      [workspaceId],
+    ),
+    pool.query<{ dominant_emotion: string; count: string }>(
+      `SELECT ma.dominant_emotion, COUNT(*) AS count
          FROM message_analytics ma
          INNER JOIN messages m
            ON m.workspace_id = ma.workspace_id
@@ -3230,10 +4546,10 @@ export async function getAnalyticsOverview(
          WHERE ma.workspace_id = $1
            AND TO_TIMESTAMP(m.ts::double precision) >= ${recentWindowSql}
          GROUP BY ma.dominant_emotion`,
-        [workspaceId],
-      ),
-      pool.query<{ count: string }>(
-        `SELECT COUNT(*) AS count
+      [workspaceId],
+    ),
+    pool.query<{ count: string }>(
+      `SELECT COUNT(*) AS count
          FROM message_analytics ma
          INNER JOIN messages m
            ON m.workspace_id = ma.workspace_id
@@ -3242,28 +4558,28 @@ export async function getAnalyticsOverview(
          WHERE ma.workspace_id = $1
            AND ma.escalation_risk = 'high'
            AND TO_TIMESTAMP(m.ts::double precision) >= ${recentWindowSql}`,
-        [workspaceId],
-      ),
-      pool.query<{ total: string }>(
-        `SELECT COALESCE(SUM(estimated_cost_usd), 0) AS total FROM llm_costs
+      [workspaceId],
+    ),
+    pool.query<{ total: string }>(
+      `SELECT COALESCE(SUM(estimated_cost_usd), 0) AS total FROM llm_costs
          WHERE workspace_id = $1`,
-        [workspaceId],
-      ),
-      pool.query<{ total: string }>(
-        `SELECT COALESCE(SUM(estimated_cost_usd), 0) AS total FROM llm_costs
+      [workspaceId],
+    ),
+    pool.query<{ total: string }>(
+      `SELECT COALESCE(SUM(estimated_cost_usd), 0) AS total FROM llm_costs
          WHERE workspace_id = $1 AND created_at >= CURRENT_DATE`,
-        [workspaceId],
-      ),
-      pool.query<{ count: string }>(
-        `SELECT COUNT(*) AS count FROM channels
+      [workspaceId],
+    ),
+    pool.query<{ count: string }>(
+      `SELECT COUNT(*) AS count FROM channels
          WHERE workspace_id = $1 AND status = 'ready'`,
-        [workspaceId],
-      ),
-      pool.query<{
-        attention_count: string;
-        at_risk_count: string;
-      }>(
-        `SELECT
+      [workspaceId],
+    ),
+    pool.query<{
+      attention_count: string;
+      at_risk_count: string;
+    }>(
+      `SELECT
            COUNT(*) FILTER (WHERE cs.health = 'attention') AS attention_count,
            COUNT(*) FILTER (WHERE cs.health = 'at-risk') AS at_risk_count
          FROM channels c
@@ -3272,28 +4588,28 @@ export async function getAnalyticsOverview(
           AND cs.channel_id = c.channel_id
          WHERE c.workspace_id = $1
            AND c.status = 'ready'`,
-        [workspaceId],
-      ),
-      pool.query<{ count: string }>(
-        `SELECT COUNT(*) AS count
+      [workspaceId],
+    ),
+    pool.query<{ count: string }>(
+      `SELECT COUNT(*) AS count
          FROM follow_up_items
          WHERE workspace_id = $1
            AND status = 'open'
            AND created_at >= ${recentWindowSql}`,
-        [workspaceId],
-      ),
-      pool.query<{ count: string }>(
-        `SELECT COUNT(*) AS count
+      [workspaceId],
+    ),
+    pool.query<{ count: string }>(
+      `SELECT COUNT(*) AS count
          FROM follow_up_items
          WHERE workspace_id = $1
            AND status = 'open'
            AND seriousness = 'high'
            AND created_at >= ${recentWindowSql}
            AND (snoozed_until IS NULL OR snoozed_until <= NOW())`,
-        [workspaceId],
-      ),
-      pool.query<{ count: string }>(
-        `SELECT COUNT(*) AS count
+      [workspaceId],
+    ),
+    pool.query<{ count: string }>(
+      `SELECT COUNT(*) AS count
          FROM message_analytics ma
          INNER JOIN messages m
            ON m.workspace_id = ma.workspace_id
@@ -3302,16 +4618,19 @@ export async function getAnalyticsOverview(
          WHERE ma.workspace_id = $1
            AND ma.escalation_risk IN ('medium', 'high')
            AND TO_TIMESTAMP(m.ts::double precision) >= ${recentWindowSql}`,
-        [workspaceId],
-      ),
-    ]);
+      [workspaceId],
+    ),
+  ]);
 
   const emotionDistribution: Record<string, number> = {};
   for (const row of emotionResult.rows) {
     emotionDistribution[row.dominant_emotion] = parseInt(row.count, 10);
   }
 
-  const totalEmotions = Object.values(emotionDistribution).reduce((sum, count) => sum + count, 0);
+  const totalEmotions = Object.values(emotionDistribution).reduce(
+    (sum, count) => sum + count,
+    0,
+  );
   const weightedEmotionTotal =
     (emotionDistribution.anger ?? 0) * 0 +
     (emotionDistribution.disgust ?? 0) * 0.1 +
@@ -3325,16 +4644,25 @@ export async function getAnalyticsOverview(
       ? 0.5
       : Math.round((weightedEmotionTotal / totalEmotions) * 100) / 100;
 
-  const atRiskChannelCount = parseInt(channelHealthResult.rows[0]?.at_risk_count ?? "0", 10);
+  const atRiskChannelCount = parseInt(
+    channelHealthResult.rows[0]?.at_risk_count ?? "0",
+    10,
+  );
   const attentionChannelCount = parseInt(
     channelHealthResult.rows[0]?.attention_count ?? "0",
     10,
   );
   const openFollowUpCount = parseInt(followUpResult.rows[0].count, 10);
-  const highSeverityFollowUpCount = parseInt(highSeverityFollowUpResult.rows[0].count, 10);
+  const highSeverityFollowUpCount = parseInt(
+    highSeverityFollowUpResult.rows[0].count,
+    10,
+  );
   const flaggedMessageCount = parseInt(flaggedMessageResult.rows[0].count, 10);
 
-  const channelPenalty = Math.min(60, atRiskChannelCount * 25 + attentionChannelCount * 10);
+  const channelPenalty = Math.min(
+    60,
+    atRiskChannelCount * 25 + attentionChannelCount * 10,
+  );
   const alertPenalty = Math.min(
     25,
     highSeverityFollowUpCount * 6 +
@@ -3342,7 +4670,10 @@ export async function getAnalyticsOverview(
   );
   const flagPenalty = Math.min(15, flaggedMessageCount * 1.5);
   const teamHealth = Math.round(
-    Math.max(0, Math.min(100, 100 - channelPenalty - alertPenalty - flagPenalty)),
+    Math.max(
+      0,
+      Math.min(100, 100 - channelPenalty - alertPenalty - flagPenalty),
+    ),
   );
 
   return {
@@ -3368,17 +4699,30 @@ export interface ChannelSummaryData {
   latestRollupAt: Date | null;
   totalMessages: number;
   totalAnalyses: number;
+  activeMessageCount: number;
+  activeWindowDays: number;
   sentimentSnapshot: Record<string, unknown>;
 }
 
 export async function getChannelSummary(
   workspaceId: string,
   channelId: string,
+  options: {
+    windowDays?: number;
+  } = {},
 ): Promise<ChannelSummaryData | null> {
+  const windowDays = Math.max(
+    1,
+    Math.min(
+      PRODUCT_WINDOW_POLICY.archiveWindowDays,
+      Math.trunc(options.windowDays ?? PRODUCT_WINDOW_POLICY.activeWindowDays),
+    ),
+  );
   const state = await getChannelState(workspaceId, channelId);
   if (!state) return null;
 
-  const [rollupResult, msgResult, analyticsResult] = await Promise.all([
+  const [rollupResult, msgResult, analyticsResult, activeMsgResult] =
+    await Promise.all([
     pool.query<{ count: string; latest: Date | null }>(
       `SELECT COUNT(*) AS count, MAX(created_at) AS latest
        FROM context_documents
@@ -3395,6 +4739,14 @@ export async function getChannelSummary(
        WHERE workspace_id = $1 AND channel_id = $2`,
       [workspaceId, channelId],
     ),
+    pool.query<{ count: string }>(
+      `SELECT COUNT(*) AS count
+       FROM messages
+       WHERE workspace_id = $1
+         AND channel_id = $2
+         AND TO_TIMESTAMP(ts::double precision) >= NOW() - MAKE_INTERVAL(days => $3::int)`,
+      [workspaceId, channelId, windowDays],
+    ),
   ]);
 
   return {
@@ -3404,7 +4756,12 @@ export async function getChannelSummary(
     latestRollupAt: rollupResult.rows[0].latest,
     totalMessages: parseInt(msgResult.rows[0].count, 10),
     totalAnalyses: parseInt(analyticsResult.rows[0].count, 10),
-    sentimentSnapshot: (state.sentiment_snapshot_json ?? {}) as Record<string, unknown>,
+    activeMessageCount: parseInt(activeMsgResult.rows[0].count, 10),
+    activeWindowDays: windowDays,
+    sentimentSnapshot: (state.sentiment_snapshot_json ?? {}) as Record<
+      string,
+      unknown
+    >,
   };
 }
 
@@ -3842,7 +5199,8 @@ export async function listConversationPolicies(
       conversation_type: rule?.conversation_type ?? channel.conversation_type,
       enabled: rule?.enabled ?? true,
       sla_hours: rule?.sla_hours ?? 48,
-      analysis_window_days: rule?.analysis_window_days ?? config.SUMMARY_WINDOW_DAYS,
+      analysis_window_days:
+        rule?.analysis_window_days ?? config.SUMMARY_WINDOW_DAYS,
       owner_user_ids: rule?.owner_user_ids ?? [],
       client_user_ids: rule?.client_user_ids ?? [],
       senior_user_ids: rule?.senior_user_ids ?? [],
@@ -3935,7 +5293,11 @@ export interface FollowUpItemWithContextRow extends FollowUpItemRow {
 }
 
 function serializeStringArray(values: string[] | null | undefined): string {
-  return JSON.stringify([...(values ?? []).filter((value) => typeof value === "string" && value.length > 0)]);
+  return JSON.stringify([
+    ...(values ?? []).filter(
+      (value) => typeof value === "string" && value.length > 0,
+    ),
+  ]);
 }
 
 export async function recordFollowUpEvent(input: {
@@ -4218,7 +5580,7 @@ export async function createFollowUpItem(input: {
        metadata_json
      )
      VALUES (
-       $1, $2, $3, $4, $5, $6, $7, $8,
+       $1, $2, $3, $4, $5, $6, $7::integer, $8,
        $9::jsonb, $10, $11, $12, $13::jsonb, $14::jsonb, $15, $16, $3, $17::jsonb
      )
      ON CONFLICT (workspace_id, channel_id, source_message_ts) DO UPDATE
@@ -4457,18 +5819,16 @@ export async function incrementFollowUpIgnoredScore(
   );
 }
 
-export async function resolveFollowUpItem(
-  input: {
-    itemId: string;
-    resolvedMessageTs?: string | null;
-    resolutionReason: FollowUpResolutionReason;
-    resolutionScope: FollowUpResolutionScope;
-    resolvedByUserId?: string | null;
-    lastEngagementAt?: Date | null;
-    resolvedViaEscalation?: boolean;
-    primaryMissedSla?: boolean;
-  },
-): Promise<void> {
+export async function resolveFollowUpItem(input: {
+  itemId: string;
+  resolvedMessageTs?: string | null;
+  resolutionReason: FollowUpResolutionReason;
+  resolutionScope: FollowUpResolutionScope;
+  resolvedByUserId?: string | null;
+  lastEngagementAt?: Date | null;
+  resolvedViaEscalation?: boolean;
+  primaryMissedSla?: boolean;
+}): Promise<void> {
   await pool.query(
     `UPDATE follow_up_items
      SET status = 'resolved',
@@ -4521,6 +5881,26 @@ export async function resolveFollowUpItemManually(
      WHERE id = $1`,
     [itemId, resolvedByUserId ?? null],
   );
+}
+
+export async function setFollowUpMeetingObligationId(
+  followUpItemId: string,
+  meetingObligationId: string,
+): Promise<void> {
+  await pool.query(
+    `UPDATE follow_up_items SET meeting_obligation_id = $2, updated_at = NOW() WHERE id = $1`,
+    [followUpItemId, meetingObligationId],
+  );
+}
+
+export async function getFollowUpItemMeetingObligationId(
+  followUpItemId: string,
+): Promise<string | null> {
+  const result = await pool.query<{ meeting_obligation_id: string | null }>(
+    `SELECT meeting_obligation_id FROM follow_up_items WHERE id = $1`,
+    [followUpItemId],
+  );
+  return result.rows[0]?.meeting_obligation_id ?? null;
 }
 
 export async function dismissFollowUpItem(
@@ -4762,18 +6142,21 @@ export interface FollowUpCandidateMessageRow {
   normalized_text: string | null;
 }
 
-export async function listRecentMessagesMissingFollowUps(options: {
-  workspaceId?: string;
-  requesterUserId?: string;
-  channelId?: string;
-  limit?: number;
-  hoursBack?: number;
-} = {}): Promise<FollowUpCandidateMessageRow[]> {
+export async function listRecentMessagesMissingFollowUps(
+  options: {
+    workspaceId?: string;
+    requesterUserId?: string;
+    channelId?: string;
+    limit?: number;
+    hoursBack?: number;
+  } = {},
+): Promise<FollowUpCandidateMessageRow[]> {
   const safeLimit = Math.max(1, Math.min(1000, options.limit ?? 500));
   const maxHoursBack = 30 * 24;
-  const safeHoursBack = options.hoursBack == null
-    ? null
-    : Math.max(1, Math.min(maxHoursBack, options.hoursBack));
+  const safeHoursBack =
+    options.hoursBack == null
+      ? null
+      : Math.max(1, Math.min(maxHoursBack, options.hoursBack));
 
   const result = await pool.query<FollowUpCandidateMessageRow>(
     `SELECT m.workspace_id, m.channel_id, m.ts, m.thread_ts, m.user_id, m.text, m.normalized_text
@@ -4951,25 +6334,23 @@ export async function upsertWorkspace(input: {
 
 export async function getWorkspaceBotCredentials(
   workspaceId: string,
-): Promise<
-  Pick<
-    WorkspaceRow,
-    | "workspace_id"
-    | "team_name"
-    | "bot_token_encrypted"
-    | "bot_token_iv"
-    | "bot_token_tag"
-    | "bot_refresh_token_encrypted"
-    | "bot_refresh_token_iv"
-    | "bot_refresh_token_tag"
-    | "bot_token_expires_at"
-    | "bot_user_id"
-    | "install_status"
-    | "last_token_refresh_at"
-    | "last_token_refresh_error"
-    | "last_token_refresh_error_at"
-  > | null
-> {
+): Promise<Pick<
+  WorkspaceRow,
+  | "workspace_id"
+  | "team_name"
+  | "bot_token_encrypted"
+  | "bot_token_iv"
+  | "bot_token_tag"
+  | "bot_refresh_token_encrypted"
+  | "bot_refresh_token_iv"
+  | "bot_refresh_token_tag"
+  | "bot_token_expires_at"
+  | "bot_user_id"
+  | "install_status"
+  | "last_token_refresh_at"
+  | "last_token_refresh_error"
+  | "last_token_refresh_error_at"
+> | null> {
   const result = await pool.query<WorkspaceRow>(
     `SELECT workspace_id,
             team_name,
@@ -5066,13 +6447,12 @@ export async function listExpiringWorkspaceIds(
   return result.rows.map((row) => row.workspace_id);
 }
 
-export async function getWorkspaceStatus(
-  workspaceId: string,
-): Promise<{
+export async function getWorkspaceStatus(workspaceId: string): Promise<{
   installed: boolean;
   botUserId: string | null;
   scopes: string[];
   tokenRotationStatus: string;
+  installedBy: string | null;
   botTokenExpiresAt: string | null;
   lastTokenRefreshAt: string | null;
   lastTokenRefreshError: string | null;
@@ -5083,6 +6463,7 @@ export async function getWorkspaceStatus(
     install_status: string;
     scopes: string[] | null;
     bot_refresh_token_encrypted: Buffer | null;
+    installed_by: string | null;
     bot_token_expires_at: Date | null;
     last_token_refresh_at: Date | null;
     last_token_refresh_error: string | null;
@@ -5093,6 +6474,7 @@ export async function getWorkspaceStatus(
        install_status,
        scopes,
        bot_refresh_token_encrypted,
+       installed_by,
        bot_token_expires_at,
        last_token_refresh_at,
        last_token_refresh_error,
@@ -5107,6 +6489,7 @@ export async function getWorkspaceStatus(
       botUserId: null,
       scopes: [],
       tokenRotationStatus: "expired_or_invalid",
+      installedBy: null,
       botTokenExpiresAt: null,
       lastTokenRefreshAt: null,
       lastTokenRefreshError: null,
@@ -5115,7 +6498,9 @@ export async function getWorkspaceStatus(
   }
   const row = result.rows[0];
   const hasRefreshToken = Boolean(row.bot_refresh_token_encrypted);
-  const expiresAt = row.bot_token_expires_at ? row.bot_token_expires_at.getTime() : null;
+  const expiresAt = row.bot_token_expires_at
+    ? row.bot_token_expires_at.getTime()
+    : null;
   const isExpired = expiresAt !== null && expiresAt <= Date.now();
   const tokenRotationStatus =
     row.install_status !== "active"
@@ -5132,10 +6517,12 @@ export async function getWorkspaceStatus(
     botUserId: row.bot_user_id,
     scopes: row.scopes ?? [],
     tokenRotationStatus,
+    installedBy: row.installed_by,
     botTokenExpiresAt: row.bot_token_expires_at?.toISOString() ?? null,
     lastTokenRefreshAt: row.last_token_refresh_at?.toISOString() ?? null,
     lastTokenRefreshError: row.last_token_refresh_error ?? null,
-    lastTokenRefreshErrorAt: row.last_token_refresh_error_at?.toISOString() ?? null,
+    lastTokenRefreshErrorAt:
+      row.last_token_refresh_error_at?.toISOString() ?? null,
   };
 }
 
@@ -5144,4 +6531,1255 @@ export async function deactivateWorkspace(workspaceId: string): Promise<void> {
     `UPDATE workspaces SET install_status = 'uninstalled', updated_at = NOW() WHERE workspace_id = $1`,
     [workspaceId],
   );
+}
+
+// ─── Fathom Connection Queries ───────────────────────────────────────────────
+
+export async function upsertFathomConnection(
+  workspaceId: string,
+  encryptedApiKey: string,
+  fathomUserEmail?: string | null,
+): Promise<FathomConnectionRow> {
+  const result = await pool.query<FathomConnectionRow>(
+    `INSERT INTO fathom_connections (workspace_id, encrypted_api_key, fathom_user_email)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (workspace_id) DO UPDATE
+       SET encrypted_api_key = EXCLUDED.encrypted_api_key,
+           fathom_user_email = COALESCE(EXCLUDED.fathom_user_email, fathom_connections.fathom_user_email),
+           status = 'active',
+           last_error = NULL,
+           updated_at = NOW()
+     RETURNING *`,
+    [workspaceId, encryptedApiKey, fathomUserEmail ?? null],
+  );
+  return result.rows[0];
+}
+
+export async function getFathomConnection(
+  workspaceId: string,
+): Promise<FathomConnectionRow | null> {
+  const result = await pool.query<FathomConnectionRow>(
+    `SELECT * FROM fathom_connections WHERE workspace_id = $1`,
+    [workspaceId],
+  );
+  return result.rows[0] ?? null;
+}
+
+export async function updateFathomConnectionStatus(
+  workspaceId: string,
+  status: FathomConnectionStatus,
+  lastError?: string | null,
+): Promise<void> {
+  await pool.query(
+    `UPDATE fathom_connections
+     SET status = $2, last_error = $3, updated_at = NOW()
+     WHERE workspace_id = $1`,
+    [workspaceId, status, lastError ?? null],
+  );
+}
+
+export async function updateFathomDefaultChannel(
+  workspaceId: string,
+  defaultChannelId: string | null,
+): Promise<void> {
+  await pool.query(
+    `UPDATE fathom_connections
+     SET default_channel_id = $2, updated_at = NOW()
+     WHERE workspace_id = $1`,
+    [workspaceId, defaultChannelId],
+  );
+}
+
+export async function updateFathomConnectionWebhook(
+  workspaceId: string,
+  webhookId: string,
+  webhookSecret: string,
+): Promise<void> {
+  await pool.query(
+    `UPDATE fathom_connections
+     SET webhook_id = $2, webhook_secret = $3, updated_at = NOW()
+     WHERE workspace_id = $1`,
+    [workspaceId, webhookId, webhookSecret],
+  );
+}
+
+export async function updateFathomConnectionSyncedAt(
+  workspaceId: string,
+): Promise<void> {
+  await pool.query(
+    `UPDATE fathom_connections SET last_synced_at = NOW(), updated_at = NOW() WHERE workspace_id = $1`,
+    [workspaceId],
+  );
+}
+
+export async function queueFathomHistoricalSync(
+  workspaceId: string,
+  windowDays: number,
+): Promise<FathomConnectionRow | null> {
+  const result = await pool.query<FathomConnectionRow>(
+    `UPDATE fathom_connections
+     SET historical_sync_status = 'queued',
+         historical_sync_window_days = $2,
+         historical_sync_started_at = NULL,
+         historical_sync_completed_at = NULL,
+         historical_sync_discovered_count = 0,
+         historical_sync_imported_count = 0,
+         historical_sync_last_error = NULL,
+         updated_at = NOW()
+     WHERE workspace_id = $1
+       AND status = 'active'
+       AND historical_sync_status NOT IN ('queued', 'running')
+     RETURNING *`,
+    [workspaceId, windowDays],
+  );
+  return result.rows[0] ?? null;
+}
+
+export async function getStaleFathomHistoricalSyncs(
+  staleMinutes: number,
+  limit = 25,
+): Promise<FathomConnectionRow[]> {
+  const result = await pool.query<FathomConnectionRow>(
+    `SELECT *
+     FROM fathom_connections
+     WHERE status = 'active'
+       AND (
+         (
+           historical_sync_status = 'queued'
+           AND updated_at < NOW() - MAKE_INTERVAL(mins => $1)
+         )
+         OR
+         (
+           historical_sync_status = 'running'
+           AND COALESCE(historical_sync_started_at, updated_at) < NOW() - MAKE_INTERVAL(mins => $1)
+         )
+       )
+     ORDER BY COALESCE(historical_sync_started_at, updated_at) ASC
+     LIMIT $2`,
+    [staleMinutes, limit],
+  );
+
+  return result.rows;
+}
+
+export async function markFathomHistoricalSyncRunning(
+  workspaceId: string,
+  windowDays: number,
+): Promise<void> {
+  await pool.query(
+    `UPDATE fathom_connections
+     SET historical_sync_status = 'running',
+         historical_sync_window_days = $2,
+         historical_sync_started_at = NOW(),
+         historical_sync_completed_at = NULL,
+         historical_sync_discovered_count = 0,
+         historical_sync_imported_count = 0,
+         historical_sync_last_error = NULL,
+         updated_at = NOW()
+     WHERE workspace_id = $1`,
+    [workspaceId, windowDays],
+  );
+}
+
+export async function completeFathomHistoricalSync(
+  workspaceId: string,
+  input: {
+    windowDays: number;
+    discoveredCount: number;
+    importedCount: number;
+  },
+): Promise<void> {
+  await pool.query(
+    `UPDATE fathom_connections
+     SET historical_sync_status = 'completed',
+         historical_sync_window_days = $2,
+         historical_sync_completed_at = NOW(),
+         historical_sync_discovered_count = $3,
+         historical_sync_imported_count = $4,
+         historical_sync_last_error = NULL,
+         updated_at = NOW()
+     WHERE workspace_id = $1`,
+    [workspaceId, input.windowDays, input.discoveredCount, input.importedCount],
+  );
+}
+
+export async function failFathomHistoricalSync(
+  workspaceId: string,
+  input: {
+    windowDays: number;
+    discoveredCount?: number;
+    importedCount?: number;
+    lastError: string | null;
+  },
+): Promise<void> {
+  await pool.query(
+    `UPDATE fathom_connections
+     SET historical_sync_status = 'failed',
+         historical_sync_window_days = $2,
+         historical_sync_completed_at = NOW(),
+         historical_sync_discovered_count = COALESCE($3, historical_sync_discovered_count),
+         historical_sync_imported_count = COALESCE($4, historical_sync_imported_count),
+         historical_sync_last_error = $5,
+         updated_at = NOW()
+     WHERE workspace_id = $1`,
+    [
+      workspaceId,
+      input.windowDays,
+      input.discoveredCount ?? null,
+      input.importedCount ?? null,
+      input.lastError,
+    ],
+  );
+}
+
+export async function deleteFathomConnection(
+  workspaceId: string,
+): Promise<void> {
+  await pool.query(
+    `UPDATE fathom_connections
+     SET status = 'revoked',
+         webhook_id = NULL,
+         webhook_secret = NULL,
+         last_error = NULL,
+         updated_at = NOW()
+     WHERE workspace_id = $1`,
+    [workspaceId],
+  );
+}
+
+export async function getActiveFathomConnections(): Promise<FathomConnectionRow[]> {
+  const result = await pool.query<FathomConnectionRow>(
+    `SELECT * FROM fathom_connections WHERE status = 'active'`,
+  );
+  return result.rows;
+}
+
+// ─── Meeting Queries ─────────────────────────────────────────────────────────
+
+export async function upsertMeeting(input: {
+  workspaceId: string;
+  fathomCallId: string;
+  meetingSource?: MeetingSource | null;
+  channelId?: string | null;
+  title: string;
+  startedAt: Date | string;
+  endedAt?: Date | string | null;
+  durationSeconds?: number | null;
+  participantsJson: FathomParticipant[];
+  fathomSummary?: string | null;
+  fathomActionItemsJson?: FathomActionItem[];
+  fathomHighlightsJson?: unknown[];
+  recordingUrl?: string | null;
+  shareUrl?: string | null;
+  transcriptText?: string | null;
+  meetingSentiment?: string | null;
+  riskSignalsJson?: Record<string, unknown>[] | null;
+  processingStatus?: MeetingProcessingStatus;
+  digestEnabled?: boolean | null;
+  trackingEnabled?: boolean | null;
+  duplicateOfMeetingId?: string | null;
+  importMode?: MeetingImportMode | null;
+}): Promise<MeetingRow> {
+  const result = await pool.query<MeetingRow>(
+    `INSERT INTO meetings (
+       workspace_id, fathom_call_id, meeting_source, channel_id, title, started_at, ended_at,
+       duration_seconds, participants_json, fathom_summary,
+       fathom_action_items_json, fathom_highlights_json,
+       recording_url, share_url, transcript_text,
+       meeting_sentiment, risk_signals_json, processing_status,
+       digest_enabled, tracking_enabled, duplicate_of_meeting_id, import_mode
+     ) VALUES (
+       $1, $2, COALESCE($3, 'api'), $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb, $12::jsonb,
+       $13, $14, $15, $16, COALESCE($17::jsonb, '[]'::jsonb), COALESCE($18, 'pending'),
+       COALESCE($19, TRUE), COALESCE($20, TRUE), $21, COALESCE($22, 'live')
+     )
+     ON CONFLICT (workspace_id, fathom_call_id) DO UPDATE
+       SET channel_id = COALESCE(EXCLUDED.channel_id, meetings.channel_id),
+           meeting_source = CASE
+             WHEN meetings.meeting_source = 'webhook' OR EXCLUDED.meeting_source = 'webhook'
+               THEN 'webhook'
+             WHEN meetings.meeting_source = 'api' OR EXCLUDED.meeting_source = 'api'
+               THEN 'api'
+             ELSE meetings.meeting_source
+           END,
+           title = EXCLUDED.title,
+           started_at = EXCLUDED.started_at,
+           ended_at = COALESCE(EXCLUDED.ended_at, meetings.ended_at),
+           duration_seconds = COALESCE(EXCLUDED.duration_seconds, meetings.duration_seconds),
+           participants_json = CASE
+             WHEN jsonb_array_length(EXCLUDED.participants_json) > 0
+               THEN EXCLUDED.participants_json
+             ELSE meetings.participants_json
+           END,
+           fathom_summary = COALESCE(EXCLUDED.fathom_summary, meetings.fathom_summary),
+           fathom_action_items_json = CASE
+             WHEN jsonb_array_length(EXCLUDED.fathom_action_items_json) > 0
+               THEN EXCLUDED.fathom_action_items_json
+             ELSE meetings.fathom_action_items_json
+           END,
+           fathom_highlights_json = CASE
+             WHEN jsonb_array_length(EXCLUDED.fathom_highlights_json) > 0
+               THEN EXCLUDED.fathom_highlights_json
+             ELSE meetings.fathom_highlights_json
+           END,
+           recording_url = COALESCE(EXCLUDED.recording_url, meetings.recording_url),
+           share_url = COALESCE(EXCLUDED.share_url, meetings.share_url),
+           transcript_text = COALESCE(EXCLUDED.transcript_text, meetings.transcript_text),
+           meeting_sentiment = COALESCE($16, meetings.meeting_sentiment),
+           risk_signals_json = CASE
+             WHEN jsonb_array_length(EXCLUDED.risk_signals_json) > 0
+               THEN EXCLUDED.risk_signals_json
+             ELSE meetings.risk_signals_json
+           END,
+           processing_status = COALESCE($18, meetings.processing_status),
+           digest_enabled = COALESCE($19, meetings.digest_enabled),
+           tracking_enabled = COALESCE($20, meetings.tracking_enabled),
+           duplicate_of_meeting_id = COALESCE($21, meetings.duplicate_of_meeting_id),
+           import_mode = CASE
+             WHEN meetings.import_mode = 'live' OR COALESCE($22, meetings.import_mode) = 'live'
+               THEN 'live'
+             ELSE COALESCE($22, meetings.import_mode)
+           END,
+           updated_at = NOW()
+     RETURNING *`,
+    [
+      input.workspaceId,
+      input.fathomCallId,
+      input.meetingSource ?? null,
+      input.channelId ?? null,
+      input.title,
+      input.startedAt instanceof Date ? input.startedAt.toISOString() : input.startedAt,
+      input.endedAt instanceof Date ? input.endedAt.toISOString() : (input.endedAt ?? null),
+      input.durationSeconds ?? null,
+      JSON.stringify(input.participantsJson),
+      input.fathomSummary ?? null,
+      JSON.stringify(input.fathomActionItemsJson ?? []),
+      JSON.stringify(input.fathomHighlightsJson ?? []),
+      input.recordingUrl ?? null,
+      input.shareUrl ?? null,
+      input.transcriptText ?? null,
+      input.meetingSentiment ?? null,
+      input.riskSignalsJson ? JSON.stringify(input.riskSignalsJson) : null,
+      input.processingStatus ?? null,
+      input.digestEnabled ?? null,
+      input.trackingEnabled ?? null,
+      input.duplicateOfMeetingId ?? null,
+      input.importMode ?? null,
+    ],
+  );
+  return result.rows[0];
+}
+
+export async function promoteSharedLinkMeeting(
+  workspaceId: string,
+  meetingId: string,
+  input: {
+    fathomCallId: string;
+    meetingSource: Exclude<MeetingSource, "shared_link">;
+    importMode?: MeetingImportMode | null;
+  },
+): Promise<MeetingRow | null> {
+  const result = await pool.query<MeetingRow>(
+    `UPDATE meetings
+     SET fathom_call_id = $3,
+         meeting_source = $4,
+         import_mode = CASE
+           WHEN import_mode = 'live' OR COALESCE($5, import_mode) = 'live'
+             THEN 'live'
+           ELSE COALESCE($5, import_mode)
+         END,
+         updated_at = NOW()
+     WHERE workspace_id = $1
+       AND id = $2
+       AND meeting_source = 'shared_link'
+     RETURNING *`,
+    [
+      workspaceId,
+      meetingId,
+      input.fathomCallId,
+      input.meetingSource,
+      input.importMode ?? null,
+    ],
+  );
+  return result.rows[0] ?? null;
+}
+
+export async function getMeeting(
+  workspaceId: string,
+  meetingId: string,
+): Promise<MeetingRow | null> {
+  const result = await pool.query<MeetingRow>(
+    `SELECT * FROM meetings WHERE workspace_id = $1 AND id = $2`,
+    [workspaceId, meetingId],
+  );
+  return result.rows[0] ?? null;
+}
+
+export async function getMeetingByFathomCallId(
+  workspaceId: string,
+  fathomCallId: string,
+): Promise<MeetingRow | null> {
+  const result = await pool.query<MeetingRow>(
+    `SELECT * FROM meetings WHERE workspace_id = $1 AND fathom_call_id = $2`,
+    [workspaceId, fathomCallId],
+  );
+  return result.rows[0] ?? null;
+}
+
+export async function listExistingMeetingCallIds(
+  workspaceId: string,
+  fathomCallIds: string[],
+): Promise<Set<string>> {
+  if (fathomCallIds.length === 0) {
+    return new Set();
+  }
+
+  const result = await pool.query<{ fathom_call_id: string }>(
+    `SELECT fathom_call_id
+     FROM meetings
+     WHERE workspace_id = $1
+       AND fathom_call_id = ANY($2::text[])`,
+    [workspaceId, fathomCallIds],
+  );
+
+  return new Set(result.rows.map((row) => row.fathom_call_id));
+}
+
+export async function getMeetingByExternalUrl(
+  workspaceId: string,
+  url: string,
+): Promise<MeetingRow | null> {
+  const result = await pool.query<MeetingRow>(
+    `SELECT * FROM meetings
+     WHERE workspace_id = $1
+       AND (share_url = $2 OR recording_url = $2)
+     ORDER BY started_at DESC
+     LIMIT 1`,
+    [workspaceId, url],
+  );
+  return result.rows[0] ?? null;
+}
+
+export async function listMeetings(
+  workspaceId: string,
+  options?: {
+    channelId?: string;
+    processingStatus?: MeetingProcessingStatus;
+    limit?: number;
+    offset?: number;
+  },
+): Promise<{ meetings: MeetingRow[]; total: number }> {
+  const conditions = [`workspace_id = $1`, `processing_status <> 'duplicate'`];
+  const params: unknown[] = [workspaceId];
+  let paramIdx = 2;
+
+  if (options?.channelId) {
+    conditions.push(`channel_id = $${paramIdx++}`);
+    params.push(options.channelId);
+  }
+  if (options?.processingStatus) {
+    conditions.push(`processing_status = $${paramIdx++}`);
+    params.push(options.processingStatus);
+  }
+
+  const where = conditions.join(" AND ");
+  const limit = options?.limit ?? 20;
+  const offset = options?.offset ?? 0;
+
+  const [countResult, dataResult] = await Promise.all([
+    pool.query<{ count: string }>(
+      `SELECT COUNT(*) AS count FROM meetings WHERE ${where}`,
+      params,
+    ),
+    pool.query<MeetingRow>(
+      `SELECT * FROM meetings WHERE ${where} ORDER BY started_at DESC LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`,
+      [...params, limit, offset],
+    ),
+  ]);
+
+  return {
+    meetings: dataResult.rows,
+    total: parseInt(countResult.rows[0].count, 10),
+  };
+}
+
+export async function updateMeetingProcessingStatus(
+  workspaceId: string,
+  meetingId: string,
+  processingStatus: MeetingProcessingStatus,
+  lastError?: string | null,
+): Promise<void> {
+  await pool.query(
+    `UPDATE meetings
+     SET processing_status = $3,
+         last_error = $4,
+         attempt_count = attempt_count + 1,
+         updated_at = NOW()
+     WHERE workspace_id = $1 AND id = $2`,
+    [workspaceId, meetingId, processingStatus, lastError ?? null],
+  );
+}
+
+export async function updateMeetingExtractionStatus(
+  workspaceId: string,
+  meetingId: string,
+  extractionStatus: MeetingExtractionStatus,
+): Promise<void> {
+  await pool.query(
+    `UPDATE meetings
+     SET extraction_status = $3, updated_at = NOW()
+     WHERE workspace_id = $1 AND id = $2`,
+    [workspaceId, meetingId, extractionStatus],
+  );
+}
+
+export async function updateMeetingChannelId(
+  workspaceId: string,
+  meetingId: string,
+  channelId: string,
+  options?: {
+    digestEnabled?: boolean | null;
+    trackingEnabled?: boolean | null;
+    importMode?: MeetingImportMode | null;
+  },
+): Promise<void> {
+  await pool.query(
+    `UPDATE meetings
+     SET channel_id = $3,
+         digest_enabled = COALESCE($4, digest_enabled),
+         tracking_enabled = COALESCE($5, tracking_enabled),
+         import_mode = CASE
+           WHEN import_mode = 'live' OR COALESCE($6, import_mode) = 'live'
+             THEN 'live'
+           ELSE COALESCE($6, import_mode)
+         END,
+         updated_at = NOW()
+     WHERE workspace_id = $1 AND id = $2`,
+    [
+      workspaceId,
+      meetingId,
+      channelId,
+      options?.digestEnabled ?? null,
+      options?.trackingEnabled ?? null,
+      options?.importMode ?? null,
+    ],
+  );
+}
+
+export async function updateMeetingExtractionResult(
+  workspaceId: string,
+  meetingId: string,
+  input: {
+    extractionStatus: MeetingExtractionStatus;
+    meetingSentiment?: string | null;
+    riskSignalsJson?: Record<string, unknown>[] | null;
+    processingStatus?: MeetingProcessingStatus | null;
+  },
+): Promise<void> {
+  await pool.query(
+    `UPDATE meetings
+     SET extraction_status = $3,
+         meeting_sentiment = COALESCE($4, meeting_sentiment),
+         risk_signals_json = CASE
+           WHEN $5::jsonb IS NULL THEN risk_signals_json
+           WHEN jsonb_array_length($5::jsonb) > 0 THEN $5::jsonb
+           ELSE risk_signals_json
+         END,
+         processing_status = COALESCE($6, processing_status),
+         updated_at = NOW()
+     WHERE workspace_id = $1 AND id = $2`,
+    [
+      workspaceId,
+      meetingId,
+      input.extractionStatus,
+      input.meetingSentiment ?? null,
+      input.riskSignalsJson ? JSON.stringify(input.riskSignalsJson) : null,
+      input.processingStatus ?? null,
+    ],
+  );
+}
+
+/**
+ * Atomically claim a meeting for digest posting.
+ * Returns true if this caller won the claim, false if another worker already claimed it.
+ */
+export async function claimMeetingDigestSlot(
+  workspaceId: string,
+  meetingId: string,
+): Promise<boolean> {
+  const result = await pool.query(
+    `UPDATE meetings
+     SET digest_claimed_at = NOW(), updated_at = NOW()
+     WHERE workspace_id = $1
+       AND id = $2
+       AND digest_message_ts IS NULL
+       AND (
+         digest_claimed_at IS NULL
+         OR digest_claimed_at < NOW() - INTERVAL '15 minutes'
+       )
+     RETURNING id`,
+    [workspaceId, meetingId],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+/**
+ * Release a digest claim (on failure, so retry can work).
+ */
+export async function releaseMeetingDigestClaim(
+  workspaceId: string,
+  meetingId: string,
+): Promise<void> {
+  await pool.query(
+    `UPDATE meetings
+     SET digest_claimed_at = NULL, updated_at = NOW()
+     WHERE workspace_id = $1 AND id = $2`,
+    [workspaceId, meetingId],
+  );
+}
+
+export async function releaseStaleMeetingDigestClaims(): Promise<Array<{
+  id: string;
+  workspace_id: string;
+}>> {
+  const result = await pool.query<{ id: string; workspace_id: string }>(
+    `UPDATE meetings
+     SET digest_claimed_at = NULL, updated_at = NOW()
+     WHERE digest_claimed_at IS NOT NULL
+       AND digest_message_ts IS NULL
+       AND digest_claimed_at < NOW() - INTERVAL '15 minutes'
+     RETURNING id, workspace_id`,
+  );
+  return result.rows;
+}
+
+export async function updateMeetingDigest(
+  workspaceId: string,
+  meetingId: string,
+  digestMessageTs: string,
+  digestThreadTs?: string | null,
+): Promise<void> {
+  await pool.query(
+    `UPDATE meetings
+     SET digest_posted_at = NOW(),
+         digest_claimed_at = NULL,
+         digest_message_ts = $3,
+         digest_thread_ts = $4,
+         processing_status = 'completed',
+         updated_at = NOW()
+     WHERE workspace_id = $1 AND id = $2`,
+    [workspaceId, meetingId, digestMessageTs, digestThreadTs ?? null],
+  );
+}
+
+// ─── Meeting Obligation Queries ──────────────────────────────────────────────
+
+export async function insertMeetingObligations(
+  workspaceId: string,
+  meetingId: string,
+  channelId: string | null,
+  obligations: Array<{
+    obligationType: MeetingObligationType;
+    title: string;
+    description?: string | null;
+    ownerUserId?: string | null;
+    ownerName?: string | null;
+    assigneeUserIds?: string[];
+    dueDate?: string | null;
+    dueDateSource?: MeetingObligationDueDateSource | null;
+    priority?: MeetingObligationPriority;
+    extractionConfidence?: number;
+    sourceContext?: string | null;
+  }>,
+): Promise<MeetingObligationRow[]> {
+  if (obligations.length === 0) return [];
+
+  const values: unknown[] = [];
+  const placeholders: string[] = [];
+  let paramIdx = 1;
+
+  for (const ob of obligations) {
+    placeholders.push(
+      `($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++})`,
+    );
+    const dedupeKey = buildMeetingObligationDedupeKey({
+      obligationType: ob.obligationType,
+      title: ob.title,
+      ownerName: ob.ownerName ?? null,
+      dueDate: ob.dueDate ?? null,
+    });
+    values.push(
+      workspaceId,
+      meetingId,
+      channelId,
+      dedupeKey,
+      ob.obligationType,
+      ob.title,
+      ob.description ?? null,
+      ob.ownerUserId ?? null,
+      ob.ownerName ?? null,
+      JSON.stringify(ob.assigneeUserIds ?? []),
+      ob.dueDate ?? null,
+      ob.dueDateSource ?? null,
+      ob.priority ?? "medium",
+      ob.extractionConfidence ?? 0,
+      ob.sourceContext ?? null,
+    );
+  }
+
+  const result = await pool.query<MeetingObligationRow>(
+    `INSERT INTO meeting_obligations (
+       workspace_id, meeting_id, channel_id, dedupe_key, obligation_type, title, description,
+       owner_user_id, owner_name, assignee_user_ids, due_date, due_date_source,
+       priority, extraction_confidence, source_context
+     ) VALUES ${placeholders.join(", ")}
+     ON CONFLICT (meeting_id, dedupe_key) DO UPDATE
+       SET channel_id = COALESCE(EXCLUDED.channel_id, meeting_obligations.channel_id),
+           obligation_type = EXCLUDED.obligation_type,
+           title = EXCLUDED.title,
+           description = COALESCE(EXCLUDED.description, meeting_obligations.description),
+           owner_user_id = COALESCE(EXCLUDED.owner_user_id, meeting_obligations.owner_user_id),
+           owner_name = COALESCE(EXCLUDED.owner_name, meeting_obligations.owner_name),
+           assignee_user_ids = EXCLUDED.assignee_user_ids,
+           due_date = COALESCE(EXCLUDED.due_date, meeting_obligations.due_date),
+           due_date_source = COALESCE(EXCLUDED.due_date_source, meeting_obligations.due_date_source),
+           priority = EXCLUDED.priority,
+           extraction_confidence = EXCLUDED.extraction_confidence,
+           source_context = COALESCE(EXCLUDED.source_context, meeting_obligations.source_context),
+           updated_at = NOW()
+     RETURNING *`,
+    values,
+  );
+  return result.rows;
+}
+
+export async function getMeetingObligations(
+  workspaceId: string,
+  meetingId: string,
+): Promise<MeetingObligationRow[]> {
+  const result = await pool.query<MeetingObligationRow>(
+    `SELECT * FROM meeting_obligations WHERE workspace_id = $1 AND meeting_id = $2 ORDER BY created_at ASC`,
+    [workspaceId, meetingId],
+  );
+  return result.rows;
+}
+
+export async function listMeetingObligations(
+  workspaceId: string,
+  options?: {
+    channelId?: string;
+    status?: MeetingObligationStatus;
+    ownerUserId?: string;
+    limit?: number;
+    offset?: number;
+  },
+): Promise<{ obligations: MeetingObligationRow[]; total: number }> {
+  const countConditions = [`workspace_id = $1`];
+  const joinConditions = [`mo.workspace_id = $1`];
+  const params: unknown[] = [workspaceId];
+  let paramIdx = 2;
+
+  if (options?.channelId) {
+    countConditions.push(`channel_id = $${paramIdx}`);
+    joinConditions.push(`mo.channel_id = $${paramIdx}`);
+    paramIdx++;
+    params.push(options.channelId);
+  }
+  if (options?.status) {
+    countConditions.push(`status = $${paramIdx}`);
+    joinConditions.push(`mo.status = $${paramIdx}`);
+    paramIdx++;
+    params.push(options.status);
+  }
+  if (options?.ownerUserId) {
+    countConditions.push(`owner_user_id = $${paramIdx}`);
+    joinConditions.push(`mo.owner_user_id = $${paramIdx}`);
+    paramIdx++;
+    params.push(options.ownerUserId);
+  }
+
+  const countWhere = countConditions.join(" AND ");
+  const joinWhere = joinConditions.join(" AND ");
+  const limit = options?.limit ?? 50;
+  const offset = options?.offset ?? 0;
+
+  const [countResult, dataResult] = await Promise.all([
+    pool.query<{ count: string }>(
+      `SELECT COUNT(*) AS count FROM meeting_obligations WHERE ${countWhere}`,
+      params,
+    ),
+    pool.query<MeetingObligationRow & { meeting_title: string | null; meeting_share_url: string | null }>(
+      `SELECT mo.*, m.title AS meeting_title, m.share_url AS meeting_share_url
+       FROM meeting_obligations mo
+       LEFT JOIN meetings m ON m.id = mo.meeting_id
+       WHERE ${joinWhere}
+       ORDER BY mo.created_at DESC
+       LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`,
+      [...params, limit, offset],
+    ),
+  ]);
+
+  return {
+    obligations: dataResult.rows,
+    total: parseInt(countResult.rows[0].count, 10),
+  };
+}
+
+export async function updateMeetingObligationStatus(
+  workspaceId: string,
+  obligationId: string,
+  status: MeetingObligationStatus,
+  resolutionEvidence?: string | null,
+): Promise<void> {
+  await pool.query(
+    `UPDATE meeting_obligations
+     SET status = $3,
+         resolved_at = CASE WHEN $3 IN ('completed', 'dismissed', 'expired') THEN NOW() ELSE resolved_at END,
+         resolution_evidence = COALESCE($4, resolution_evidence),
+         updated_at = NOW()
+     WHERE workspace_id = $1 AND id = $2`,
+    [workspaceId, obligationId, status, resolutionEvidence ?? null],
+  );
+}
+
+export async function resolveMeetingObligation(
+  obligationId: string,
+  status: MeetingObligationStatus,
+  resolutionEvidence: string,
+): Promise<void> {
+  await pool.query(
+    `UPDATE meeting_obligations
+     SET status = $2, resolved_at = NOW(), resolution_evidence = $3, updated_at = NOW()
+     WHERE id = $1`,
+    [obligationId, status, resolutionEvidence],
+  );
+}
+
+export async function updateMeetingObligationFollowUpLink(
+  obligationId: string,
+  followUpItemId: string,
+): Promise<void> {
+  await pool.query(
+    `UPDATE meeting_obligations SET follow_up_item_id = $2, updated_at = NOW() WHERE id = $1`,
+    [obligationId, followUpItemId],
+  );
+}
+
+/**
+ * Atomically link a follow-up item and a meeting obligation bidirectionally.
+ * Both updates happen in a single transaction to prevent inconsistent state.
+ */
+export async function linkObligationAndFollowUp(
+  obligationId: string,
+  followUpItemId: string,
+): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `UPDATE follow_up_items SET meeting_obligation_id = $2, updated_at = NOW() WHERE id = $1`,
+      [followUpItemId, obligationId],
+    );
+    await client.query(
+      `UPDATE meeting_obligations SET follow_up_item_id = $2, updated_at = NOW() WHERE id = $1`,
+      [obligationId, followUpItemId],
+    );
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function appendMeetingObligationEvidence(
+  obligationId: string,
+  evidence: { messageTs: string; userId: string; snippet: string },
+): Promise<void> {
+  await pool.query(
+    `UPDATE meeting_obligations
+     SET slack_evidence_json = slack_evidence_json || $2::jsonb,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [obligationId, JSON.stringify(evidence)],
+  );
+}
+
+export async function getMeetingObligationCounts(
+  workspaceId: string,
+  channelId: string,
+): Promise<{ openCount: number; overdueCount: number }> {
+  const result = await pool.query<{ open_count: string; overdue_count: string }>(
+    `SELECT
+       COUNT(*) FILTER (WHERE status IN ('open', 'in_progress')) AS open_count,
+       COUNT(*) FILTER (
+         WHERE status IN ('open', 'in_progress')
+           AND due_date < CURRENT_DATE
+       ) AS overdue_count
+     FROM meeting_obligations
+     WHERE workspace_id = $1 AND channel_id = $2`,
+    [workspaceId, channelId],
+  );
+  const row = result.rows[0];
+  return {
+    openCount: parseInt(row?.open_count ?? "0", 10),
+    overdueCount: parseInt(row?.overdue_count ?? "0", 10),
+  };
+}
+
+export async function listMeetingObligationCountsByChannel(
+  workspaceId: string,
+  channelIds: string[],
+): Promise<Array<{ channelId: string; openCount: number; overdueCount: number }>> {
+  if (channelIds.length === 0) {
+    return [];
+  }
+
+  const result = await pool.query<{
+    channel_id: string;
+    open_count: string;
+    overdue_count: string;
+  }>(
+    `SELECT
+       channel_id,
+       COUNT(*) FILTER (WHERE status IN ('open', 'in_progress')) AS open_count,
+       COUNT(*) FILTER (
+         WHERE status IN ('open', 'in_progress')
+           AND due_date < CURRENT_DATE
+       ) AS overdue_count
+     FROM meeting_obligations
+     WHERE workspace_id = $1
+       AND channel_id = ANY($2::text[])
+     GROUP BY channel_id`,
+    [workspaceId, channelIds],
+  );
+
+  return result.rows.map((row) => ({
+    channelId: row.channel_id,
+    openCount: parseInt(row.open_count, 10),
+    overdueCount: parseInt(row.overdue_count, 10),
+  }));
+}
+
+export interface RecentChannelActivityMetrics {
+  windowHours: number;
+  messageCount: number;
+  activeThreads: number;
+  openFollowUps: number;
+  resolvedFollowUps: number;
+}
+
+export async function getRecentChannelActivityMetrics(
+  workspaceId: string,
+  channelId: string,
+  windowHours: number = 24,
+): Promise<RecentChannelActivityMetrics> {
+  const safeWindowHours = Math.max(1, Math.min(168, windowHours));
+  const [messageResult, followUpResult] = await Promise.all([
+    pool.query<{ message_count: string; active_thread_count: string }>(
+      `SELECT
+         COUNT(*)::int AS message_count,
+         COUNT(DISTINCT thread_ts)::int AS active_thread_count
+       FROM messages
+       WHERE workspace_id = $1
+         AND channel_id = $2
+         AND created_at >= NOW() - ($3::int * INTERVAL '1 hour')`,
+      [workspaceId, channelId, safeWindowHours],
+    ),
+    pool.query<{ open_follow_up_count: string; resolved_follow_up_count: string }>(
+      `SELECT
+         COUNT(*) FILTER (
+           WHERE status = 'open'
+             AND (snoozed_until IS NULL OR snoozed_until <= NOW())
+         )::int AS open_follow_up_count,
+         COUNT(*) FILTER (
+           WHERE status = 'resolved'
+             AND resolved_at >= NOW() - ($3::int * INTERVAL '1 hour')
+         )::int AS resolved_follow_up_count
+       FROM follow_up_items
+       WHERE workspace_id = $1
+         AND channel_id = $2`,
+      [workspaceId, channelId, safeWindowHours],
+    ),
+  ]);
+
+  const messageRow = messageResult.rows[0];
+  const followUpRow = followUpResult.rows[0];
+
+  return {
+    windowHours: safeWindowHours,
+    messageCount: parseInt(messageRow?.message_count ?? "0", 10),
+    activeThreads: parseInt(messageRow?.active_thread_count ?? "0", 10),
+    openFollowUps: parseInt(followUpRow?.open_follow_up_count ?? "0", 10),
+    resolvedFollowUps: parseInt(followUpRow?.resolved_follow_up_count ?? "0", 10),
+  };
+}
+
+export async function getOpenMeetingObligationsForChannel(
+  workspaceId: string,
+  channelId: string,
+): Promise<MeetingObligationRow[]> {
+  const result = await pool.query<MeetingObligationRow>(
+    `SELECT * FROM meeting_obligations
+     WHERE workspace_id = $1 AND channel_id = $2 AND status IN ('open', 'in_progress')
+     ORDER BY created_at DESC`,
+    [workspaceId, channelId],
+  );
+  return result.rows;
+}
+
+// ─── Meeting Channel Link Queries ────────────────────────────────────────────
+
+export async function upsertMeetingChannelLink(input: {
+  workspaceId: string;
+  channelId: string;
+  linkType: MeetingChannelLinkType;
+  domainPattern?: string | null;
+  titlePattern?: string | null;
+  recorderEmailPattern?: string | null;
+  priority?: number;
+  digestEnabled?: boolean;
+  trackingEnabled?: boolean;
+}): Promise<MeetingChannelLinkRow> {
+  const result = await pool.query<MeetingChannelLinkRow>(
+    `INSERT INTO meeting_channel_links (
+       workspace_id, channel_id, link_type, domain_pattern, title_pattern,
+       recorder_email_pattern, priority, digest_enabled, tracking_enabled
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     ON CONFLICT (workspace_id, channel_id) DO UPDATE
+       SET link_type = EXCLUDED.link_type,
+           domain_pattern = EXCLUDED.domain_pattern,
+           title_pattern = EXCLUDED.title_pattern,
+           recorder_email_pattern = EXCLUDED.recorder_email_pattern,
+           priority = EXCLUDED.priority,
+           digest_enabled = EXCLUDED.digest_enabled,
+           tracking_enabled = EXCLUDED.tracking_enabled,
+           updated_at = NOW()
+     RETURNING *`,
+    [
+      input.workspaceId,
+      input.channelId,
+      input.linkType,
+      input.domainPattern ?? null,
+      input.titlePattern ?? null,
+      input.recorderEmailPattern ?? null,
+      input.priority ?? 0,
+      input.digestEnabled ?? true,
+      input.trackingEnabled ?? true,
+    ],
+  );
+  return result.rows[0];
+}
+
+export async function getMeetingChannelLinkByChannelId(
+  workspaceId: string,
+  channelId: string,
+): Promise<MeetingChannelLinkRow | null> {
+  const result = await pool.query<MeetingChannelLinkRow>(
+    `SELECT * FROM meeting_channel_links
+     WHERE workspace_id = $1 AND channel_id = $2 AND enabled = TRUE
+     LIMIT 1`,
+    [workspaceId, channelId],
+  );
+  return result.rows[0] ?? null;
+}
+
+export async function listMeetingChannelLinks(
+  workspaceId: string,
+): Promise<MeetingChannelLinkRow[]> {
+  const result = await pool.query<MeetingChannelLinkRow>(
+    `SELECT * FROM meeting_channel_links WHERE workspace_id = $1 AND enabled = TRUE ORDER BY priority DESC, created_at ASC`,
+    [workspaceId],
+  );
+  return result.rows;
+}
+
+export async function deleteMeetingChannelLink(
+  workspaceId: string,
+  linkId: string,
+): Promise<void> {
+  await pool.query(
+    `DELETE FROM meeting_channel_links WHERE workspace_id = $1 AND id = $2`,
+    [workspaceId, linkId],
+  );
+}
+
+export async function getUnlinkedMeetingCount(
+  workspaceId: string,
+): Promise<number> {
+  const result = await pool.query<{ count: string }>(
+    `SELECT COUNT(*) AS count FROM meetings WHERE workspace_id = $1 AND channel_id IS NULL`,
+    [workspaceId],
+  );
+  return parseInt(result.rows[0].count, 10);
+}
+
+// ─── Channel Classification ──────────────────────────────────────────────────
+
+export async function upsertChannelClassification(
+  workspaceId: string,
+  channelId: string,
+  classification: {
+    channelType: ChannelClassificationType;
+    confidence: number;
+    classificationSource: ClassificationSource;
+    clientName?: string | null;
+    topicsJson?: string[];
+    reasoning?: string | null;
+  },
+): Promise<ChannelClassificationRow> {
+  const result = await pool.query<ChannelClassificationRow>(
+    `INSERT INTO channel_classifications (
+       workspace_id, channel_id, channel_type, confidence,
+       classification_source, client_name, topics_json, reasoning, classified_at
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, NOW())
+     ON CONFLICT (workspace_id, channel_id) DO UPDATE
+       SET channel_type = CASE
+             WHEN channel_classifications.classification_source = 'human_override'
+               THEN channel_classifications.channel_type
+             ELSE EXCLUDED.channel_type
+           END,
+           confidence = CASE
+             WHEN channel_classifications.classification_source = 'human_override'
+               THEN channel_classifications.confidence
+             ELSE EXCLUDED.confidence
+           END,
+           classification_source = CASE
+             WHEN channel_classifications.classification_source = 'human_override'
+               THEN channel_classifications.classification_source
+             ELSE EXCLUDED.classification_source
+           END,
+           client_name = CASE
+             WHEN channel_classifications.classification_source = 'human_override'
+               THEN channel_classifications.client_name
+             ELSE COALESCE(EXCLUDED.client_name, channel_classifications.client_name)
+           END,
+           topics_json = CASE
+             WHEN channel_classifications.classification_source = 'human_override'
+               THEN channel_classifications.topics_json
+             ELSE EXCLUDED.topics_json
+           END,
+           reasoning = CASE
+             WHEN channel_classifications.classification_source = 'human_override'
+               THEN channel_classifications.reasoning
+             ELSE EXCLUDED.reasoning
+           END,
+           classified_at = CASE
+             WHEN channel_classifications.classification_source = 'human_override'
+               THEN channel_classifications.classified_at
+             ELSE NOW()
+           END,
+           updated_at = NOW()
+     RETURNING *`,
+    [
+      workspaceId,
+      channelId,
+      classification.channelType,
+      classification.confidence,
+      classification.classificationSource,
+      classification.clientName ?? null,
+      JSON.stringify(classification.topicsJson ?? []),
+      classification.reasoning ?? null,
+    ],
+  );
+  return result.rows[0];
+}
+
+export async function overrideChannelClassification(
+  workspaceId: string,
+  channelId: string,
+  channelType: ChannelClassificationType,
+  clientName?: string | null,
+): Promise<ChannelClassificationRow> {
+  const result = await pool.query<ChannelClassificationRow>(
+    `INSERT INTO channel_classifications (
+       workspace_id, channel_id, channel_type, confidence,
+       classification_source, client_name, classified_at, overridden_at
+     )
+     VALUES ($1, $2, $3, 1.0, 'human_override', $4, NOW(), NOW())
+     ON CONFLICT (workspace_id, channel_id) DO UPDATE
+       SET channel_type = $3,
+           confidence = 1.0,
+           classification_source = 'human_override',
+           client_name = COALESCE($4, channel_classifications.client_name),
+           overridden_at = NOW(),
+           updated_at = NOW()
+     RETURNING *`,
+    [workspaceId, channelId, channelType, clientName ?? null],
+  );
+  return result.rows[0];
+}
+
+export async function getChannelClassification(
+  workspaceId: string,
+  channelId: string,
+): Promise<ChannelClassificationRow | null> {
+  const result = await pool.query<ChannelClassificationRow>(
+    `SELECT * FROM channel_classifications WHERE workspace_id = $1 AND channel_id = $2`,
+    [workspaceId, channelId],
+  );
+  return result.rows[0] ?? null;
+}
+
+export async function listChannelClassifications(
+  workspaceId: string,
+): Promise<ChannelClassificationRow[]> {
+  const result = await pool.query<ChannelClassificationRow>(
+    `SELECT * FROM channel_classifications WHERE workspace_id = $1 ORDER BY channel_type, classified_at DESC`,
+    [workspaceId],
+  );
+  return result.rows;
+}
+
+export async function getChannelsNeedingLLMClassification(
+  workspaceId: string,
+): Promise<ChannelClassificationRow[]> {
+  const result = await pool.query<ChannelClassificationRow>(
+    `SELECT * FROM channel_classifications
+     WHERE workspace_id = $1
+       AND classification_source != 'human_override'
+       AND confidence < 0.7
+     ORDER BY confidence ASC
+     LIMIT 20`,
+    [workspaceId],
+  );
+  return result.rows;
+}
+
+export async function getStaleClassifications(
+  workspaceId: string,
+  olderThanDays: number,
+): Promise<ChannelClassificationRow[]> {
+  const result = await pool.query<ChannelClassificationRow>(
+    `SELECT * FROM channel_classifications
+     WHERE workspace_id = $1
+       AND classification_source != 'human_override'
+       AND classified_at < NOW() - INTERVAL '1 day' * $2
+     ORDER BY classified_at ASC
+     LIMIT 20`,
+    [workspaceId, olderThanDays],
+  );
+  return result.rows;
+}
+
+// ─── Meeting queries for prep briefs ──────────────────────────────────────
+
+export async function listMeetingsForChannel(
+  workspaceId: string,
+  channelId: string,
+  limit: number = 5,
+): Promise<MeetingRow[]> {
+  const safeLimit = Math.max(1, Math.min(50, limit));
+  const result = await pool.query<MeetingRow>(
+    `SELECT * FROM meetings
+     WHERE workspace_id = $1
+       AND channel_id = $2
+       AND processing_status NOT IN ('failed', 'duplicate')
+     ORDER BY started_at DESC
+     LIMIT $3`,
+    [workspaceId, channelId, safeLimit],
+  );
+  return result.rows;
 }

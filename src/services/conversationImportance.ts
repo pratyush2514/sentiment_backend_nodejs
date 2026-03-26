@@ -1,5 +1,5 @@
 import { config } from "../config.js";
-import type { ConversationType } from "../types/database.js";
+import type { ChannelClassificationType, ConversationType } from "../types/database.js";
 
 export type ImportanceTierOverride =
   | "auto"
@@ -14,7 +14,17 @@ export interface ConversationImportanceInput {
   conversationType?: ConversationType | null;
   clientUserIds?: string[] | null;
   importanceTierOverride?: ImportanceTierOverride | null;
+  /** AI-classified channel type (from channel_classifications table) */
+  channelType?: ChannelClassificationType | null;
+  /** Classification confidence (0-1). Only trust classification for high-stakes decisions when > 0.6 */
+  classificationConfidence?: number | null;
+  /** Classification source. Human overrides are always trusted. */
+  classificationSource?: string | null;
 }
+
+/** Minimum confidence to use AI classification for importance tier decisions.
+ * Below this, fall through to heuristics. Human overrides bypass this gate. */
+const CLASSIFICATION_TRUST_THRESHOLD = 0.6;
 
 export interface ConversationImportanceResolution {
   importanceTierOverride: ImportanceTierOverride;
@@ -60,6 +70,28 @@ export function normalizeImportanceTier(
 export function deriveRecommendedImportanceTier(
   input: Omit<ConversationImportanceInput, "importanceTierOverride">,
 ): ImportanceTier {
+  // AI classification used assistively — only trusted above confidence threshold
+  // or when human-overridden. Below threshold, fall through to proven heuristics.
+  const isHumanOverride = input.classificationSource === "human_override";
+  const confidence = input.classificationConfidence ?? 0;
+  const trustClassification = isHumanOverride || confidence >= CLASSIFICATION_TRUST_THRESHOLD;
+
+  if (input.channelType && trustClassification) {
+    switch (input.channelType) {
+      case "client_delivery":
+      case "client_support":
+        return "high_value";
+      case "internal_social":
+      case "automated":
+        return "low_value";
+      case "internal_engineering":
+      case "internal_operations":
+        return "standard";
+      // "unclassified" falls through to heuristics below
+    }
+  }
+
+  // Existing heuristics (fallback when no classification)
   if ((input.clientUserIds ?? []).length > 0) {
     return "high_value";
   }

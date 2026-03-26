@@ -4,6 +4,7 @@ declare global {
       id?: string;
       workspaceId?: string;
       userId?: string;
+      authMode?: "user" | "service" | "development";
     }
   }
 }

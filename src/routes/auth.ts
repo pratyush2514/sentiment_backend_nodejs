@@ -3,7 +3,7 @@ import { jwtVerify } from "jose";
 import { z } from "zod/v4";
 import { config } from "../config.js";
 import * as db from "../db/queries.js";
-import { requireApiAuth } from "../middleware/apiAuth.js";
+import { requireServiceAuth } from "../middleware/apiAuth.js";
 import { cancelWorkspaceJobs, enqueueChannelDiscovery } from "../queue/boss.js";
 import { invalidateWorkspaceCache } from "../services/slackClientFactory.js";
 import { encryptToken } from "../services/tokenEncryption.js";
@@ -118,7 +118,7 @@ const installBody = z.object({
  * encrypts it with AES-256-GCM, and stores it in the workspaces table.
  * Idempotent — repeated calls for the same workspace update the stored token.
  */
-authRouter.post("/install", requireApiAuth, async (req: Request, res: Response) => {
+authRouter.post("/install", requireServiceAuth, async (req: Request, res: Response) => {
   const parsed = installBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
@@ -140,7 +140,7 @@ authRouter.post("/install", requireApiAuth, async (req: Request, res: Response) 
 
   try {
     const {
-      workspaceId,
+      workspaceId: requestedWorkspaceId,
       teamName,
       botToken,
       refreshToken,
@@ -150,6 +150,16 @@ authRouter.post("/install", requireApiAuth, async (req: Request, res: Response) 
       installedBy,
       scopes,
     } = parsed.data;
+    const workspaceId = req.workspaceId;
+
+    if (!workspaceId || requestedWorkspaceId !== workspaceId) {
+      res.status(403).json({
+        error: "workspace_mismatch",
+        message: "Authenticated workspace does not match install payload",
+        requestId: req.id,
+      });
+      return;
+    }
 
     if (config.NODE_ENV === "production") {
       if (!refreshToken) {
@@ -230,12 +240,12 @@ authRouter.post("/install", requireApiAuth, async (req: Request, res: Response) 
  * GET /api/auth/workspace-status?workspace_id=T1234
  * Returns whether a workspace has a bot installation.
  */
-authRouter.get("/workspace-status", requireApiAuth, async (req: Request, res: Response) => {
-  const workspaceId = (req.query.workspace_id as string) ?? req.workspaceId;
+authRouter.get("/workspace-status", requireServiceAuth, async (req: Request, res: Response) => {
+  const workspaceId = req.workspaceId;
   if (!workspaceId) {
     res.status(400).json({
       error: "missing_workspace_id",
-      message: "workspace_id query parameter is required",
+      message: "workspace_id is required",
       requestId: req.id,
     });
     return;
@@ -258,24 +268,14 @@ authRouter.get("/workspace-status", requireApiAuth, async (req: Request, res: Re
 
 /**
  * POST /api/auth/logout
- * Cancels all pending queue jobs for the workspace so they don't keep running
- * after the user signs out. Data is preserved for re-login.
+ * Ends the caller's app session without affecting shared workspace processing.
+ * Workspace jobs continue running so other active users and background flows
+ * are not disrupted by an individual logout.
  */
-authRouter.post("/logout", requireApiAuth, async (req: Request, res: Response) => {
+authRouter.post("/logout", requireServiceAuth, async (req: Request, res: Response) => {
   const workspaceId = req.workspaceId;
-  if (!workspaceId) {
-    res.json({ ok: true, cancelled: 0 });
-    return;
-  }
-
-  try {
-    const cancelled = await cancelWorkspaceJobs(workspaceId);
-    log.info({ workspaceId, cancelled }, "Workspace jobs cancelled on logout");
-    res.json({ ok: true, cancelled });
-  } catch (err) {
-    log.error({ err, workspaceId }, "Failed to cancel workspace jobs on logout");
-    res.json({ ok: true, cancelled: 0 });
-  }
+  log.info({ workspaceId }, "Workspace logout acknowledged without queue cancellation");
+  res.json({ ok: true, sessionCleared: true, workspaceId });
 });
 
 // ─── Disconnect Workspace ────────────────────────────────────────────────────
@@ -286,7 +286,7 @@ authRouter.post("/logout", requireApiAuth, async (req: Request, res: Response) =
  * roles, follow-ups, costs) and the workspace record itself. Also cancels
  * all pending queue jobs. The user must re-install the bot to use the app again.
  */
-authRouter.delete("/disconnect", requireApiAuth, async (req: Request, res: Response) => {
+authRouter.delete("/disconnect", requireServiceAuth, async (req: Request, res: Response) => {
   const workspaceId = req.workspaceId;
   if (!workspaceId) {
     res.status(400).json({ error: "missing_workspace_id", requestId: req.id });

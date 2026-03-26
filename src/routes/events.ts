@@ -17,38 +17,51 @@ export const eventsRouter = Router();
 eventsRouter.get("/stream", (req: Request, res: Response) => {
   const workspaceId = req.workspaceId ?? "default";
   const channelId = req.query.channel_id as string | undefined;
+  let heartbeat: ReturnType<typeof setInterval> | null = null;
+  let cleaned = false;
+
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    if (heartbeat) clearInterval(heartbeat);
+    eventBus.off("dashboard_event", onEvent);
+    log.debug({ workspaceId, channelId }, "SSE client disconnected");
+  };
 
   const onEvent = (event: DashboardEvent) => {
+    if (cleaned || res.destroyed) { cleanup(); return; }
     if (event.workspaceId !== workspaceId) return;
     if (channelId && event.channelId !== channelId) return;
     try {
       res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
     } catch {
-      // Connection may have closed; cleanup happens in req.on("close")
+      cleanup();
     }
   };
 
   eventBus.on("dashboard_event", onEvent);
 
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive",
-  });
+  try {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+    res.write(`event: connected\ndata: ${JSON.stringify({ workspaceId, channelId: channelId ?? null })}\n\n`);
+  } catch {
+    cleanup();
+    return;
+  }
 
-  res.write(`event: connected\ndata: ${JSON.stringify({ workspaceId, channelId: channelId ?? null })}\n\n`);
-
-  const heartbeat = setInterval(() => {
+  heartbeat = setInterval(() => {
+    if (res.destroyed) { cleanup(); return; }
     try {
       res.write(": heartbeat\n\n");
     } catch {
-      // Connection closed
+      cleanup();
     }
   }, config.SSE_HEARTBEAT_MS);
 
-  req.on("close", () => {
-    clearInterval(heartbeat);
-    eventBus.off("dashboard_event", onEvent);
-    log.debug({ workspaceId, channelId }, "SSE client disconnected");
-  });
+  req.on("close", cleanup);
+  req.on("error", cleanup);
 });

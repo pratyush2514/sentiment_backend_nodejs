@@ -11,7 +11,8 @@ import {
   shutdown as shutdownDb,
 } from "./db/pool.js";
 import { getStuckInitializingChannels } from "./db/queries.js";
-import { requireApiAuth } from "./middleware/apiAuth.js";
+import { requireApiAuth, requireServiceAuth } from "./middleware/apiAuth.js";
+import { createRateLimiter } from "./middleware/rateLimiter.js";
 import { startQueue, stopQueue, enqueueBackfill } from "./queue/boss.js";
 import { adminRouter } from "./routes/admin.js";
 import { alertsRouter } from "./routes/alerts.js";
@@ -20,14 +21,24 @@ import { authRouter } from "./routes/auth.js";
 import { channelsRouter } from "./routes/channels.js";
 import { conversationPoliciesRouter } from "./routes/conversationPolicies.js";
 import { eventsRouter } from "./routes/events.js";
+import { fathomRouter, fathomWebhookRouter } from "./routes/fathom.js";
 import { followUpRulesRouter } from "./routes/followUpRules.js";
 import { healthRouter } from "./routes/health.js";
 import { inboxRouter } from "./routes/inbox.js";
+import { meetingsRouter } from "./routes/meetings.js";
 import { rolesRouter } from "./routes/roles.js";
 import { slackRouter } from "./routes/slack.js";
 import { slackEventsRouter } from "./routes/slackEvents.js";
 import { startChannelMemberSync, stopChannelMemberSync } from "./services/channelMemberSync.js";
+import {
+  startDashboardEventTransport,
+  stopDashboardEventTransport,
+} from "./services/dashboardEventTransport.js";
 import { startFollowUpSweep, stopFollowUpSweep } from "./services/followUpSweep.js";
+import {
+  startIntelligenceReconcileLoop,
+  stopIntelligenceReconcileLoop,
+} from "./services/intelligenceReconcile.js";
 import { startQueueMaintenance, stopQueueMaintenance } from "./services/queueMaintenance.js";
 import { startRetentionSchedule, stopRetentionSchedule } from "./services/retentionSweep.js";
 import {
@@ -75,13 +86,21 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-// JSON parsing for API routes with body size limit (slack events use raw body, handled in slackEventsRouter)
-app.use("/api", express.json({ limit: "1mb" }));
+// JSON parsing for API routes with body size limit.
+// Fathom webhooks use raw-body signature verification and are excluded here.
+const apiJsonParser = express.json({ limit: "1mb" });
+app.use("/api", (req: Request, res: Response, next: NextFunction) => {
+  if (req.path.startsWith("/fathom/webhook")) {
+    next();
+    return;
+  }
+  apiJsonParser(req, res, next);
+});
 
 // Routes
 app.use("/", healthRouter);
 app.use("/api/auth", express.json({ limit: "1mb" }), authRouter);
-app.use("/api/admin", requireApiAuth, adminRouter);
+app.use("/api/admin", requireServiceAuth, adminRouter);
 app.use("/api/channels", requireApiAuth, channelsRouter);
 app.use("/api/analytics", requireApiAuth, analyticsRouter);
 app.use("/api/alerts", requireApiAuth, alertsRouter);
@@ -92,6 +111,26 @@ app.use("/api/roles", requireApiAuth, rolesRouter);
 app.use("/api/events", requireApiAuth, eventsRouter);
 app.use("/api/slack", requireApiAuth, slackRouter);
 app.use("/slack/events", slackEventsRouter);
+
+// Fathom webhook (no auth — uses HMAC signature verification)
+// Fathom connection management routes (require auth)
+let webhookLimiterCleanup: (() => void) | null = null;
+if (config.FATHOM_ENABLED) {
+  const webhookLimiter = createRateLimiter({
+    windowMs: 60_000, // 1 minute window
+    max: 60, // 60 requests per minute per IP (matches Fathom's own limit)
+    keyFn: (req) => req.ip ?? "unknown",
+  });
+  webhookLimiterCleanup = webhookLimiter.cleanup;
+  app.use(
+    "/api/fathom/webhook",
+    webhookLimiter.middleware,
+    express.raw({ type: "application/json", limit: "5mb" }),
+    fathomWebhookRouter,
+  );
+  app.use("/api/fathom", requireApiAuth, express.json({ limit: "5mb" }), fathomRouter);
+  app.use("/api/meetings", requireApiAuth, meetingsRouter);
+}
 
 // Centralized error handler
 app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
@@ -159,9 +198,15 @@ async function start(): Promise<void> {
         "Pending migrations detected and RUN_MIGRATIONS_ON_BOOT is disabled",
       );
       process.exit(1);
-    }
-    logger.info("Migration status verified");
   }
+  logger.info("Migration status verified");
+  }
+
+  await startDashboardEventTransport({ subscribe: roleIncludesWeb() });
+  logger.info(
+    { subscribed: roleIncludesWeb() },
+    "Dashboard event transport initialized",
+  );
 
   // 3. Start pg-boss queue
   await startQueue({ registerWorkers: roleIncludesWorkers() });
@@ -189,6 +234,27 @@ async function start(): Promise<void> {
       logger.info({ count: stuckChannels.length }, "Startup recovery: re-enqueued stuck channels");
     }
 
+    // Classify channels that don't have a classification yet
+    try {
+      const { getReadyChannels } = await import("./db/queries.js");
+      const { getChannelClassification } = await import("./db/queries.js");
+      const { enqueueChannelClassify } = await import("./queue/boss.js");
+      const readyChannels = await getReadyChannels();
+      let classifyCount = 0;
+      for (const ch of readyChannels) {
+        const existing = await getChannelClassification(ch.workspace_id, ch.channel_id);
+        if (!existing) {
+          await enqueueChannelClassify(ch.workspace_id, ch.channel_id, "startup");
+          classifyCount++;
+        }
+      }
+      if (classifyCount > 0) {
+        logger.info({ count: classifyCount }, "Startup: enqueued classification for unclassified channels");
+      }
+    } catch (err) {
+      logger.warn({ err }, "Startup classification enqueue failed (non-critical)");
+    }
+
     startReconcileLoop();
     logger.info("Thread reconciliation loop started");
 
@@ -206,6 +272,10 @@ async function start(): Promise<void> {
 
     startTokenRotationSchedule();
     logger.info("Slack bot token refresh sweep scheduled");
+
+    startIntelligenceReconcileLoop();
+    logger.info("Intelligence reconciliation loop started");
+
     markSchedulerRunning(true);
   }
 
@@ -248,13 +318,20 @@ async function gracefulShutdown(signal: string): Promise<void> {
     stopRetentionSchedule();
     stopChannelMemberSync();
     stopTokenRotationSchedule();
+    stopIntelligenceReconcileLoop();
     markSchedulerRunning(false);
   }
+
+  // Clean up rate limiters
+  webhookLimiterCleanup?.();
 
   // 3. Drain queue
   await stopQueue();
 
-  // 4. Close DB pools
+  // 4. Stop dashboard event transport
+  await stopDashboardEventTransport();
+
+  // 5. Close DB pools
   await shutdownDb();
 
   process.exit(0);

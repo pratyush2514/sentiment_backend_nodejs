@@ -29,6 +29,16 @@ describe("isHumanMessage", () => {
     expect(isHumanMessage(msg)).toBe(false);
   });
 
+  it("returns true when attachment text is present even if top-level text is empty", () => {
+    const msg = {
+      ts: "1234567890.123456",
+      text: "",
+      user: "U12345",
+      attachments: [{ text: "Build failed in prod" }],
+    };
+    expect(isHumanMessage(msg)).toBe(true);
+  });
+
   it("returns false when user is missing", () => {
     const msg = { ts: "1234567890.123456", text: "hello" };
     expect(isHumanMessage(msg)).toBe(false);
@@ -88,6 +98,18 @@ describe("isProcessableHumanMessageEvent", () => {
       bot_id: "B12345",
     };
     expect(isProcessableHumanMessageEvent(event)).toBe(false);
+  });
+
+  it("returns true for message events whose content only exists in blocks", () => {
+    const event = {
+      type: "message",
+      ts: "1234567890.123456",
+      text: "",
+      user: "U12345",
+      channel: "C12345",
+      blocks: [{ text: { type: "mrkdwn", text: "Workflow alert" } }],
+    };
+    expect(isProcessableHumanMessageEvent(event)).toBe(true);
   });
 });
 

@@ -1,5 +1,5 @@
 import * as db from "../db/queries.js";
-import { enqueueBackfill } from "../queue/boss.js";
+import { enqueueBackfillTier1 } from "../queue/boss.js";
 import { logger } from "../utils/logger.js";
 import { getSlackClient } from "./slackClientFactory.js";
 
@@ -98,7 +98,7 @@ export async function discoverChannels(workspaceId: string): Promise<DiscoveryRe
     const existing = existingMap.get(ch.id);
     if (!existing) {
       await db.upsertChannel(workspaceId, ch.id, "pending", ch.name, conversationType);
-      const jobId = await enqueueBackfill(workspaceId, ch.id, "sync");
+      const jobId = await enqueueBackfillTier1(workspaceId, ch.id, "sync");
       newChannels.push({ id: ch.id, name: ch.name, jobId });
     } else if (existing.conversation_type !== conversationType) {
       // Fix stale conversation_type (e.g. channels added before migration 007)
